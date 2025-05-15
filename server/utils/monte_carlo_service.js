@@ -1,5 +1,6 @@
 const cppMonteCarlo = require('./monte_carlo_cpp');
 const jsMonteCarlo = require('./monte_carlo_js');
+const analyticalBS = require('./black_scholes_analytical');
 
 /**
  * Monte Carlo Black-Scholes Option Pricing Service
@@ -16,10 +17,11 @@ class MonteCarloService {
    * @param {number} params.T - Time to maturity in years
    * @param {boolean} params.isCall - True for call option, false for put option
    * @param {number} params.numTrials - Number of Monte Carlo trials
-   * @returns {Promise<Object>} Option price, confidence interval, and implementation used
+   * @param {boolean} [params.validateWithAnalytical=false] - Whether to validate against analytical solution
+   * @returns {Promise<Object>} Option price, confidence interval, implementation used, and validation (if requested)
    */
   async calculateOptionPrice(params) {
-    const { S0, K, r, sigma, T, isCall, numTrials } = params;
+    const { S0, K, r, sigma, T, isCall, numTrials, validateWithAnalytical = false } = params;
     let result;
     let implementation = 'javascript';
 
@@ -57,7 +59,47 @@ class MonteCarloService {
     // Add implementation info to result
     result.implementation = implementation;
     
+    // Validate with analytical solution if requested
+    if (validateWithAnalytical) {
+      try {
+        const analyticalResult = analyticalBS.calculateAnalyticalPrice(params);
+        
+        // Calculate relative error
+        const monteCarloPrice = result.optionPrice;
+        const analyticalPrice = analyticalResult.analyticalPrice;
+        const absoluteError = Math.abs(monteCarloPrice - analyticalPrice);
+        const relativeError = absoluteError / analyticalPrice;
+        
+        // Determine if Monte Carlo price is within the confidence interval
+        const isWithinConfidenceInterval = 
+          analyticalPrice >= result.confidence.lower && 
+          analyticalPrice <= result.confidence.upper;
+        
+        // Add validation results to the response
+        result.validation = {
+          analyticalPrice,
+          absoluteError,
+          relativeError,
+          isWithinConfidenceInterval
+        };
+      } catch (error) {
+        console.error('Analytical validation failed:', error.message);
+        result.validation = {
+          error: error.message
+        };
+      }
+    }
+    
     return result;
+  }
+
+  /**
+   * Get analytical Black-Scholes price
+   * @param {Object} params - Black-Scholes parameters
+   * @returns {Object} Analytical option price
+   */
+  getAnalyticalPrice(params) {
+    return analyticalBS.calculateAnalyticalPrice(params);
   }
 
   /**
@@ -68,7 +110,8 @@ class MonteCarloService {
     const isCppAvailable = cppMonteCarlo.isExecutableAvailable();
     return {
       cpp_available: isCppAvailable,
-      default_implementation: isCppAvailable ? 'cpp' : 'javascript'
+      default_implementation: isCppAvailable ? 'cpp' : 'javascript',
+      analytical_available: true
     };
   }
 }
