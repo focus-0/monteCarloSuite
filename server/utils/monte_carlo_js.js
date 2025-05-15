@@ -8,8 +8,26 @@
  * @param {boolean} isCall - True for call option, false for put option
  * @param {number} numTrials - Number of Monte Carlo trials
  * @returns {Object} Option price and confidence interval
+ * @throws {Error} If parameters are invalid
  */
 function monteCarloBlackScholes(S0, K, r, sigma, T, isCall, numTrials) {
+  // Validate parameters
+  if (S0 <= 0) {
+    throw new Error("Stock price (S0) must be positive");
+  }
+  if (K <= 0) {
+    throw new Error("Strike price (K) must be positive");
+  }
+  if (sigma <= 0) {
+    throw new Error("Volatility (sigma) must be positive");
+  }
+  if (T <= 0) {
+    throw new Error("Time to maturity (T) must be positive");
+  }
+  if (numTrials <= 0) {
+    throw new Error("Number of trials must be positive");
+  }
+  
   const payoffs = [];
   
   for (let i = 0; i < numTrials; i++) {

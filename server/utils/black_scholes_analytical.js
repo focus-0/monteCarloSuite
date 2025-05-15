@@ -36,11 +36,38 @@ function normalCDF(x) {
  * @param {number} T - Time to maturity in years
  * @param {boolean} isCall - True for call option, false for put option
  * @returns {number} Option price
+ * @throws {Error} If parameters are invalid
  */
 function blackScholesAnalytical(S0, K, r, sigma, T, isCall) {
-  // Check for edge cases
-  if (sigma <= 0 || T <= 0) {
-    throw new Error("Volatility and time to maturity must be positive");
+  // More comprehensive validation
+  if (typeof S0 !== 'number' || isNaN(S0)) {
+    throw new Error("Stock price (S0) must be a valid number");
+  }
+  if (typeof K !== 'number' || isNaN(K)) {
+    throw new Error("Strike price (K) must be a valid number");
+  }
+  if (typeof r !== 'number' || isNaN(r)) {
+    throw new Error("Interest rate (r) must be a valid number");
+  }
+  if (typeof sigma !== 'number' || isNaN(sigma)) {
+    throw new Error("Volatility (sigma) must be a valid number");
+  }
+  if (typeof T !== 'number' || isNaN(T)) {
+    throw new Error("Time to maturity (T) must be a valid number");
+  }
+  
+  // Business validation
+  if (S0 <= 0) {
+    throw new Error("Stock price (S0) must be positive");
+  }
+  if (K <= 0) {
+    throw new Error("Strike price (K) must be positive");
+  }
+  if (sigma <= 0) {
+    throw new Error("Volatility (sigma) must be positive");
+  }
+  if (T <= 0) {
+    throw new Error("Time to maturity (T) must be positive");
   }
 
   // Calculate d1 and d2
@@ -72,13 +99,23 @@ function calculateAnalyticalPrice(params) {
   const { S0, K, r, sigma, T, isCall } = params;
   
   try {
+    // Parse parameters explicitly for stronger validation
+    const parsedParams = {
+      S0: parseFloat(S0),
+      K: parseFloat(K),
+      r: parseFloat(r),
+      sigma: parseFloat(sigma),
+      T: parseFloat(T),
+      isCall: Boolean(isCall)
+    };
+    
     const analyticalPrice = blackScholesAnalytical(
-      parseFloat(S0),
-      parseFloat(K),
-      parseFloat(r),
-      parseFloat(sigma),
-      parseFloat(T),
-      Boolean(isCall)
+      parsedParams.S0,
+      parsedParams.K,
+      parsedParams.r,
+      parsedParams.sigma,
+      parsedParams.T,
+      parsedParams.isCall
     );
 
     return {

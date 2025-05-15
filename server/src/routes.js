@@ -5,14 +5,84 @@ const historyRoutes = require('../routes/historyRoutes');
 
 const router = express.Router();
 
+/**
+ * Validate option pricing parameters
+ * @param {Object} params - Parameters to validate
+ * @returns {Object} Validation result {isValid, error}
+ */
+function validateOptionParams(params) {
+  const { S0, K, r, sigma, T, numTrials } = params;
+  
+  // Convert to numbers for validation
+  const parsedParams = {
+    S0: parseFloat(S0),
+    K: parseFloat(K),
+    r: parseFloat(r),
+    sigma: parseFloat(sigma),
+    T: parseFloat(T),
+    numTrials: parseInt(numTrials)
+  };
+  
+  // Check missing parameters
+  if (!S0 || !K || r === undefined || !sigma || !T || numTrials === undefined) {
+    return { 
+      isValid: false, 
+      error: 'Missing required parameters' 
+    };
+  }
+  
+  // Validate S0 (Stock Price)
+  if (parsedParams.S0 <= 0) {
+    return { 
+      isValid: false, 
+      error: 'Stock price must be positive' 
+    };
+  }
+  
+  // Validate K (Strike Price)
+  if (parsedParams.K <= 0) {
+    return { 
+      isValid: false, 
+      error: 'Strike price must be positive' 
+    };
+  }
+  
+  // Validate sigma (Volatility)
+  if (parsedParams.sigma <= 0) {
+    return { 
+      isValid: false, 
+      error: 'Volatility must be positive' 
+    };
+  }
+  
+  // Validate T (Time to Maturity)
+  if (parsedParams.T <= 0) {
+    return { 
+      isValid: false, 
+      error: 'Time to maturity must be positive' 
+    };
+  }
+  
+  // Validate numTrials (Number of Monte Carlo Trials)
+  if (parsedParams.numTrials < 100) {
+    return { 
+      isValid: false, 
+      error: 'Number of trials must be at least 100' 
+    };
+  }
+  
+  return { isValid: true };
+}
+
 // API endpoint for Black-Scholes calculation
 router.post('/api/black-scholes', async (req, res) => {
   try {
     const { S0, K, r, sigma, T, isCall, numTrials, validateWithAnalytical } = req.body;
     
     // Validate inputs
-    if (!S0 || !K || r === undefined || !sigma || !T || numTrials === undefined) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+    const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
+    if (!validation.isValid) {
+      return res.status(400).json({ error: validation.error });
     }
     
     // Parse inputs
@@ -40,9 +110,10 @@ router.post('/api/analytical-black-scholes', async (req, res) => {
   try {
     const { S0, K, r, sigma, T, isCall } = req.body;
     
-    // Validate inputs
-    if (!S0 || !K || r === undefined || !sigma || !T) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+    // Validate inputs (exclude numTrials which isn't needed for analytical)
+    const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials: 1000 });
+    if (!validation.isValid) {
+      return res.status(400).json({ error: validation.error });
     }
     
     // Parse inputs
@@ -69,8 +140,9 @@ router.post('/api/validate-model', async (req, res) => {
     const { S0, K, r, sigma, T, isCall, numTrials } = req.body;
     
     // Validate inputs
-    if (!S0 || !K || r === undefined || !sigma || !T || numTrials === undefined) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+    const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
+    if (!validation.isValid) {
+      return res.status(400).json({ error: validation.error });
     }
     
     // Parse inputs
@@ -99,8 +171,9 @@ router.post('/api/benchmark', async (req, res) => {
     const { S0, K, r, sigma, T, isCall, numTrials } = req.body;
     
     // Validate inputs
-    if (!S0 || !K || r === undefined || !sigma || !T || numTrials === undefined) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+    const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
+    if (!validation.isValid) {
+      return res.status(400).json({ error: validation.error });
     }
     
     // Parse inputs

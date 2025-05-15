@@ -22,7 +22,10 @@ const BlackScholes = () => {
   // State for results
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("Missing required parameters");
+  const [error, setError] = useState(null);
+  
+  // State for validation errors
+  const [validationErrors, setValidationErrors] = useState({});
   
   // State for implementation status
   const [implementationStatus, setImplementationStatus] = useState({
@@ -83,13 +86,67 @@ const BlackScholes = () => {
     }
   };
 
+  // Validate form inputs
+  const validateForm = () => {
+    const errors = {};
+    
+    // Validate S0 (Stock Price)
+    if (formData.S0 <= 0) {
+      errors.S0 = 'Stock price must be positive';
+    }
+    
+    // Validate K (Strike Price)
+    if (formData.K <= 0) {
+      errors.K = 'Strike price must be positive';
+    }
+    
+    // Validate r (Interest Rate) - can be negative in real markets
+    if (formData.r < -0.5 || formData.r > 1) {
+      errors.r = 'Interest rate should typically be between -0.5 and 1 (or -50% to 100%)';
+    }
+    
+    // Validate sigma (Volatility)
+    if (formData.sigma <= 0) {
+      errors.sigma = 'Volatility must be positive';
+    } else if (formData.sigma > 1) {
+      errors.sigma = 'Volatility is unusually high (>100%), please verify';
+    }
+    
+    // Validate T (Time to Maturity)
+    if (formData.T <= 0) {
+      errors.T = 'Time to maturity must be positive';
+    } else if (formData.T > 30) {
+      errors.T = 'Time to maturity is unusually long (>30 years), please verify';
+    }
+    
+    // Validate numTrials (Number of Monte Carlo Trials)
+    if (formData.numTrials < 1000) {
+      errors.numTrials = 'At least 1000 trials recommended for accuracy';
+    } else if (formData.numTrials > 10000000) {
+      errors.numTrials = 'Very large number of trials may cause performance issues';
+    }
+    
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   // Handle input changes
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
+    const newValue = type === 'checkbox' ? checked : value;
+    
     setFormData({
       ...formData,
       [name]: type === 'checkbox' ? checked : value
     });
+    
+    // Clear validation error for this field when it's changed
+    if (validationErrors[name]) {
+      setValidationErrors({
+        ...validationErrors,
+        [name]: null
+      });
+    }
   };
 
   // Handle metadata changes
@@ -104,6 +161,13 @@ const BlackScholes = () => {
   // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Validate inputs before submission
+    if (!validateForm()) {
+      setError('Please correct the input errors before calculating');
+      return;
+    }
+    
     setLoading(true);
     setError(null);
 
@@ -126,7 +190,11 @@ const BlackScholes = () => {
         tags: tagsArray
       });
     } catch (err) {
-      setError('Error calculating option price. Please check your inputs and try again.');
+      if (err.response && err.response.data && err.response.data.error) {
+        setError(`Error: ${err.response.data.error}`);
+      } else {
+        setError('Error calculating option price. Please check your inputs and try again.');
+      }
       console.error('Error:', err);
     } finally {
       setLoading(false);
@@ -245,7 +313,7 @@ const BlackScholes = () => {
             </p>
             
             <form onSubmit={handleSubmit}>
-              <div className="form-group">
+              <div className={`form-group ${validationErrors.S0 ? 'has-error' : ''}`}>
                 <label>Stock Price (S<sub>0</sub>):</label>
                 <input
                   type="number"
@@ -256,9 +324,10 @@ const BlackScholes = () => {
                   min="0.01"
                   required
                 />
+                {validationErrors.S0 && <div className="error-message">{validationErrors.S0}</div>}
               </div>
               
-              <div className="form-group">
+              <div className={`form-group ${validationErrors.K ? 'has-error' : ''}`}>
                 <label>Strike Price (K):</label>
                 <input
                   type="number"
@@ -269,9 +338,10 @@ const BlackScholes = () => {
                   min="0.01"
                   required
                 />
+                {validationErrors.K && <div className="error-message">{validationErrors.K}</div>}
               </div>
               
-              <div className="form-group">
+              <div className={`form-group ${validationErrors.r ? 'has-error' : ''}`}>
                 <label>Risk-free Rate (r):</label>
                 <input
                   type="number"
@@ -281,9 +351,10 @@ const BlackScholes = () => {
                   step="0.001"
                   required
                 />
+                {validationErrors.r && <div className="error-message">{validationErrors.r}</div>}
               </div>
               
-              <div className="form-group">
+              <div className={`form-group ${validationErrors.sigma ? 'has-error' : ''}`}>
                 <label>Volatility (σ):</label>
                 <input
                   type="number"
@@ -294,9 +365,10 @@ const BlackScholes = () => {
                   min="0.01"
                   required
                 />
+                {validationErrors.sigma && <div className="error-message">{validationErrors.sigma}</div>}
               </div>
               
-              <div className="form-group">
+              <div className={`form-group ${validationErrors.T ? 'has-error' : ''}`}>
                 <label>Time to Maturity (T) in years:</label>
                 <input
                   type="number"
@@ -307,6 +379,7 @@ const BlackScholes = () => {
                   min="0.01"
                   required
                 />
+                {validationErrors.T && <div className="error-message">{validationErrors.T}</div>}
               </div>
               
               <div className="form-group checkbox">
@@ -321,7 +394,7 @@ const BlackScholes = () => {
                 </label>
               </div>
               
-              <div className="form-group">
+              <div className={`form-group ${validationErrors.numTrials ? 'has-error' : ''}`}>
                 <label>Number of Monte Carlo Trials:</label>
                 <input
                   type="number"
@@ -332,6 +405,7 @@ const BlackScholes = () => {
                   min="1000"
                   required
                 />
+                {validationErrors.numTrials && <div className="error-message">{validationErrors.numTrials}</div>}
               </div>
               
               <div className="form-group checkbox">

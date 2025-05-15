@@ -54,6 +54,28 @@ void monte_carlo_black_scholes(double S0, double K, double r, double sigma,
                                double T, bool isCall, int numTrials,
                                double &price, double &lower, double &upper)
 {
+    // Validate inputs
+    if (S0 <= 0.0)
+    {
+        throw std::invalid_argument("Stock price (S0) must be positive");
+    }
+    if (K <= 0.0)
+    {
+        throw std::invalid_argument("Strike price (K) must be positive");
+    }
+    if (sigma <= 0.0)
+    {
+        throw std::invalid_argument("Volatility (sigma) must be positive");
+    }
+    if (T <= 0.0)
+    {
+        throw std::invalid_argument("Time to maturity (T) must be positive");
+    }
+    if (numTrials <= 0)
+    {
+        throw std::invalid_argument("Number of trials must be positive");
+    }
+
     // Pre-allocate memory outside of calculation loop with alignment for SIMD
     ALIGN_DATA(64)
     std::vector<double> payoffs(numTrials);
@@ -132,6 +154,28 @@ void monte_carlo_black_scholes_mt(double S0, double K, double r, double sigma,
                                   double T, bool isCall, int numTrials, int num_threads,
                                   double &price, double &lower, double &upper)
 {
+    // Validate inputs
+    if (S0 <= 0.0)
+    {
+        throw std::invalid_argument("Stock price (S0) must be positive");
+    }
+    if (K <= 0.0)
+    {
+        throw std::invalid_argument("Strike price (K) must be positive");
+    }
+    if (sigma <= 0.0)
+    {
+        throw std::invalid_argument("Volatility (sigma) must be positive");
+    }
+    if (T <= 0.0)
+    {
+        throw std::invalid_argument("Time to maturity (T) must be positive");
+    }
+    if (numTrials <= 0)
+    {
+        throw std::invalid_argument("Number of trials must be positive");
+    }
+
     // Determine number of threads to use
     if (num_threads <= 0)
     {
@@ -365,10 +409,26 @@ int main(int argc, char *argv[])
         int numTrials = std::stoi(argv[7]);
         int benchmark_mode = std::stoi(argv[8]);
 
-        // Validate inputs
-        if (S0 <= 0 || K <= 0 || sigma <= 0 || T <= 0 || numTrials <= 0)
+        // Validate inputs with improved error messages
+        if (S0 <= 0.0)
         {
-            throw std::invalid_argument("Invalid input parameters");
+            throw std::invalid_argument("Stock price (S0) must be positive");
+        }
+        if (K <= 0.0)
+        {
+            throw std::invalid_argument("Strike price (K) must be positive");
+        }
+        if (sigma <= 0.0)
+        {
+            throw std::invalid_argument("Volatility (sigma) must be positive");
+        }
+        if (T <= 0.0)
+        {
+            throw std::invalid_argument("Time to maturity (T) must be positive");
+        }
+        if (numTrials <= 0)
+        {
+            throw std::invalid_argument("Number of trials must be positive");
         }
 
         if (benchmark_mode == 0)
@@ -440,12 +500,18 @@ int main(int argc, char *argv[])
             std::cout << "]}";
         }
     }
-    catch (const std::exception &e)
+    catch (const std::invalid_argument &e)
     {
-        // Return error as JSON
+        // Return validation errors as JSON for better client integration
+        std::cerr << "Error: " << e.what() << std::endl;
         std::cout << "{\"error\":\"" << e.what() << "\"}";
         return 1;
     }
-
+    catch (const std::exception &e)
+    {
+        std::cerr << "Error: " << e.what() << std::endl;
+        std::cout << "{\"error\":\"An unexpected error occurred\"}";
+        return 1;
+    }
     return 0;
 }
