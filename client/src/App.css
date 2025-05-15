@@ -3,10 +3,121 @@ body {
   padding: 0;
   background-color: #f5f5f5;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Dark mode styles */
+body.dark-mode {
+  background-color: #000000;
+  color: #ffffff;
 }
 
 .App {
   text-align: center;
+}
+
+.dark-mode .App-header {
+  background-color: #000000;
+  color: #ffffff;
+  border-bottom: 1px solid #333;
+}
+
+.dark-mode .tabs button {
+  color: #cccccc;
+  background-color: transparent;
+}
+
+.dark-mode .tabs button:hover {
+  background-color: #222222;
+}
+
+.dark-mode .tabs button.active {
+  background-color: #0d6efd;
+  color: white;
+}
+
+.dark-mode .input-column, 
+.dark-mode .results-column,
+.dark-mode .benchmark-container,
+.dark-mode .black-scholes-container {
+  background-color: #121212;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.dark-mode label {
+  color: #ffffff;
+}
+
+.dark-mode input[type="number"],
+.dark-mode input[type="text"],
+.dark-mode textarea {
+  background-color: #1e1e1e;
+  border-color: #333;
+  color: #ffffff;
+}
+
+.dark-mode input[type="number"]:focus,
+.dark-mode input[type="text"]:focus,
+.dark-mode textarea:focus {
+  border-color: #0d6efd;
+}
+
+.dark-mode .no-results {
+  background-color: #121212;
+  color: #aaaaaa;
+  border-color: #333;
+}
+
+.dark-mode .no-results h3 {
+  color: #ffffff;
+}
+
+.dark-mode .history-table {
+  background-color: #121212;
+  color: #ffffff;
+}
+
+.dark-mode .history-table th {
+  background-color: #000000;
+  color: #ffffff;
+}
+
+.dark-mode .history-table tbody tr:hover {
+  background-color: #1e1e1e;
+}
+
+.dark-mode .tooltip-content {
+  background-color: #1e1e1e;
+  color: #ffffff;
+}
+
+/* Theme toggle button */
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 20px;
+}
+
+.theme-toggle {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 5px;
+  margin-left: 15px;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.theme-toggle:hover {
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 /* Navbar styling */
@@ -764,4 +875,376 @@ input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button { 
   opacity: 1;
   height: 20px;
+}
+
+/* Dark mode chart styling */
+.dark-mode .chart-container {
+  background-color: #121212;
+  border-color: #333;
+}
+
+.dark-mode .chart canvas {
+  filter: none;
+}
+
+/* Chart specific colors for dark mode */
+.dark-mode .chart {
+  background-color: #121212;
+  color: #ffffff;
+}
+
+/* Ensuring benchmark result data is visible */
+.dark-mode .result-summary {
+  background-color: #121212;
+  color: #ffffff;
+  border: 1px solid #333;
+}
+
+.dark-mode .validation-success {
+  color: #4caf50;
+}
+
+.dark-mode .validation-warning {
+  color: #ff9800;
+}
+
+.dark-mode .validation-error {
+  color: #f44336;
+}
+
+.dark-mode .detailed-results {
+  color: #ffffff;
+}
+
+.dark-mode .detailed-results table {
+  background-color: #121212;
+  color: #ffffff;
+  border-color: #333;
+}
+
+.dark-mode .detailed-results th,
+.dark-mode .detailed-results td {
+  border-color: #333;
+}
+
+.dark-mode .detailed-results th {
+  background-color: #000000;
+}
+
+/* Dark mode for history items */
+.dark-mode .history-item {
+  background-color: #121212;
+  border-color: #333;
+}
+
+.dark-mode .history-item:hover {
+  background-color: #1e1e1e;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.dark-mode .load-button, 
+.dark-mode .edit-button {
+  background-color: #1e1e1e;
+  color: #ffffff;
+  border-color: #333;
+}
+
+.dark-mode .load-button:hover, 
+.dark-mode .edit-button:hover {
+  background-color: #333333;
+}
+
+.dark-mode .cancel-button {
+  background-color: #1e1e1e;
+  color: #ffffff;
+}
+
+.dark-mode .cancel-button:hover {
+  background-color: #333333;
+}
+
+.dark-mode .run-button {
+  background-color: #1a73e8;
+}
+
+.dark-mode .run-button:hover {
+  background-color: #1557b0;
+}
+
+/* For any popups or modals */
+.dark-mode .edit-simulation-modal {
+  background-color: #121212;
+  color: #ffffff;
+  border-color: #333;
+}
+
+/* Loading indicator in dark mode */
+.dark-mode .loading-container {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+.dark-mode .loading-spinner {
+  border-top-color: #ffffff;
+}
+
+.dark-mode .loading-indicator {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+.dark-mode .spinner {
+  border-top-color: #ffffff;
+}
+
+.dark-mode .parameters {
+  background-color: #1e1e1e;
+  color: #ffffff;
+}
+
+.dark-mode .implementation-info {
+  background-color: #1e1e1e;
+  color: #cccccc;
+}
+
+.dark-mode .implementation-status .badge {
+  filter: brightness(0.85);
+}
+
+.dark-mode .history-section {
+  color: #ffffff;
+}
+
+.dark-mode .simulation-metadata {
+  background-color: #121212;
+  border-color: #333;
+  color: #ffffff;
+}
+
+.dark-mode .tag {
+  background-color: #1e1e1e;
+  color: #cccccc;
+}
+
+.dark-mode h1, 
+.dark-mode h2, 
+.dark-mode h3, 
+.dark-mode h4, 
+.dark-mode h5 {
+  color: #ffffff;
+}
+
+.dark-mode .history-item h3 {
+  color: #3e95ff;
+}
+
+.dark-mode .timestamp {
+  color: #aaaaaa;
+}
+
+.dark-mode .description {
+  color: #dddddd;
+}
+
+/* Improved Chart.js dark mode support */
+.dark-mode .chart-tooltip {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border-color: #333 !important;
+}
+
+.dark-mode .chart-title,
+.dark-mode .chart-legend {
+  color: #ffffff !important;
+}
+
+.dark-mode .chart-axis,
+.dark-mode .chart-grid-line {
+  stroke: #444 !important;
+}
+
+.dark-mode .chart-axis-label {
+  fill: #cccccc !important;
+}
+
+/* Ensure chart label text is visible */
+.dark-mode .chart text {
+  fill: #ffffff !important;
+}
+
+/* Help with Chart.js legends */
+.dark-mode canvas + ul > li {
+  color: #ffffff !important;
+}
+
+/* Create a dynamic theme style for Chart.js */
+.dark-mode .charts-container {
+  --chart-grid-color: #333;
+  --chart-text-color: #ffffff;
+  --chart-border-color: #444;
+}
+
+.dark-mode .charts-container canvas {
+  opacity: 1 !important;
+}
+
+/* Chart.js specifics for dark mode */
+.dark-mode .charts-container .chart-js-render-monitor {
+  background-color: #121212;
+}
+
+/* Override Chart.js generated styles with more specific selectors */
+.dark-mode div.chart div.chart-container {
+  background-color: #121212 !important;
+}
+
+/* Improve bar visibility in dark mode */
+.dark-mode .charts-container .chart-bar {
+  --chart-bar-js-color: rgba(54, 162, 235, 0.8);
+  --chart-bar-cpp-color: rgba(75, 192, 192, 0.8);
+}
+
+/* Ensure form elements are properly styled in benchmark */
+.dark-mode .form-container input,
+.dark-mode .form-container button {
+  background-color: #1e1e1e;
+  color: #ffffff;
+  border-color: #333;
+}
+
+.dark-mode .form-container button:hover:not(:disabled) {
+  background-color: #2a2a2a;
+}
+
+.dark-mode .form-container button:disabled {
+  background-color: #1a1a1a;
+  color: #777777;
+}
+
+/* Benchmark run button styles */
+.form-container button {
+  background-color: #0d6efd;
+  color: white;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  margin-top: 20px;
+  width: 100%;
+  font-weight: 500;
+  transition: background-color 0.2s ease;
+}
+
+.form-container button:hover:not(:disabled) {
+  background-color: #0b5ed7;
+}
+
+.form-container button:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
+}
+
+.dark-mode .form-container button {
+  background-color: #1a73e8;
+  color: white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.dark-mode .form-container button:hover:not(:disabled) {
+  background-color: #1557b0;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.5);
+}
+
+.dark-mode .form-container button:disabled {
+  background-color: #333333;
+  color: #999999;
+  box-shadow: none;
+}
+
+/* Form container button styles */
+.form-container button[type="submit"] {
+  background-color: #0d6efd;
+  color: white;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  margin-top: 20px;
+  width: 100%;
+  font-weight: 500;
+  transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.form-container button[type="submit"]:hover:not(:disabled) {
+  background-color: #0b5ed7;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.form-container button[type="submit"]:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.form-container button[type="submit"]:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.8;
+  box-shadow: none;
+}
+
+.dark-mode .form-container button[type="submit"] {
+  background-color: #1a73e8;
+  color: white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.dark-mode .form-container button[type="submit"]:hover:not(:disabled) {
+  background-color: #1557b0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.dark-mode .form-container button[type="submit"]:disabled {
+  background-color: #333333;
+  color: #999999;
+  box-shadow: none;
+}
+
+/* Benchmark form container */
+.benchmark-container .form-container {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  padding: 25px;
+  margin-bottom: 30px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+  border: 1px solid #eaeaea;
+}
+
+.dark-mode .benchmark-container .form-container {
+  background-color: #121212;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  border: 1px solid #333;
+}
+
+/* Improve form inputs in dark mode */
+.dark-mode .form-container input[type="number"],
+.dark-mode .form-container input[type="text"] {
+  background-color: #1e1e1e;
+  color: white;
+  border-color: #444;
+}
+
+.dark-mode .form-container input[type="number"]:focus,
+.dark-mode .form-container input[type="text"]:focus {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.2);
+}
+
+/* Make checkbox more visible in dark mode */
+.dark-mode .form-container input[type="checkbox"] {
+  accent-color: #1a73e8;
 } 

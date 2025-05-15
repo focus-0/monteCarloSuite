@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import axios from 'axios';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Line, Bar } from 'react-chartjs-2';
+import { ThemeContext } from '../ThemeContext';
 
 // Register ChartJS components
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
 
 const Benchmark = () => {
+  // Get dark mode state from context
+  const { darkMode } = useContext(ThemeContext);
+
   // State for form inputs
   const [formData, setFormData] = useState({
     S0: 100,
@@ -22,6 +26,17 @@ const Benchmark = () => {
   const [benchmarkResults, setBenchmarkResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Apply dark mode theme to Chart.js
+  useEffect(() => {
+    // Set global defaults for Chart.js
+    ChartJS.defaults.color = darkMode ? '#ffffff' : '#666';
+    ChartJS.defaults.borderColor = darkMode ? '#444' : '#ddd';
+    ChartJS.defaults.backgroundColor = darkMode ? '#121212' : '#fff';
+    
+    // Don't try to access Chart.instances directly - it's not available in newer Chart.js
+    // Charts will automatically use the global defaults when they're created
+  }, [darkMode]);
 
   // Handle input changes
   const handleChange = (e) => {
@@ -69,15 +84,15 @@ const Benchmark = () => {
         {
           label: 'C++ Execution Time (ms)',
           data: executionTimes,
-          backgroundColor: 'rgba(54, 162, 235, 0.5)',
-          borderColor: 'rgba(54, 162, 235, 1)',
+          backgroundColor: darkMode ? 'rgba(0, 156, 255, 0.7)' : 'rgba(54, 162, 235, 0.5)',
+          borderColor: darkMode ? 'rgba(0, 156, 255, 1)' : 'rgba(54, 162, 235, 1)',
           borderWidth: 1
         },
         {
           label: 'JavaScript Execution Time (ms)',
           data: jsExecutionTimes,
-          backgroundColor: 'rgba(255, 206, 86, 0.5)',
-          borderColor: 'rgba(255, 206, 86, 1)',
+          backgroundColor: darkMode ? 'rgba(220, 53, 69, 0.7)' : 'rgba(220, 53, 69, 0.5)',
+          borderColor: darkMode ? 'rgba(220, 53, 69, 1)' : 'rgba(220, 53, 69, 1)',
           borderWidth: 1,
           borderDash: [5, 5]
         }
@@ -112,12 +127,12 @@ const Benchmark = () => {
             bestCppTime === Infinity ? 0 : bestCppTime
           ],
           backgroundColor: [
-            'rgba(255, 206, 86, 0.5)',
-            'rgba(54, 162, 235, 0.5)'
+            darkMode ? 'rgba(220, 53, 69, 0.7)' : 'rgba(220, 53, 69, 0.5)',
+            darkMode ? 'rgba(0, 156, 255, 0.7)' : 'rgba(54, 162, 235, 0.5)'
           ],
           borderColor: [
-            'rgba(255, 206, 86, 1)',
-            'rgba(54, 162, 235, 1)'
+            darkMode ? 'rgba(220, 53, 69, 1)' : 'rgba(220, 53, 69, 1)',
+            darkMode ? 'rgba(0, 156, 255, 1)' : 'rgba(54, 162, 235, 1)'
           ],
           borderWidth: 1
         }
@@ -131,10 +146,21 @@ const Benchmark = () => {
     plugins: {
       legend: {
         position: 'top',
+        labels: {
+          color: darkMode ? '#ffffff' : '#666'
+        }
       },
       title: {
         display: true,
-        text: 'Performance by Thread Count'
+        text: 'Performance by Thread Count',
+        color: darkMode ? '#ffffff' : '#333'
+      },
+      tooltip: {
+        backgroundColor: darkMode ? '#000000' : 'rgba(0, 0, 0, 0.7)',
+        titleColor: darkMode ? '#ffffff' : '#fff',
+        bodyColor: darkMode ? '#ffffff' : '#fff',
+        borderColor: darkMode ? '#333' : 'rgba(0, 0, 0, 0.1)',
+        borderWidth: 1
       }
     },
     scales: {
@@ -142,13 +168,27 @@ const Benchmark = () => {
         beginAtZero: true,
         title: {
           display: true,
-          text: 'Execution Time (ms)'
+          text: 'Execution Time (ms)',
+          color: darkMode ? '#ffffff' : '#666'
+        },
+        grid: {
+          color: darkMode ? '#333' : '#ddd'
+        },
+        ticks: {
+          color: darkMode ? '#ffffff' : '#666'
         }
       },
       x: {
         title: {
           display: true,
-          text: 'Thread Count'
+          text: 'Thread Count',
+          color: darkMode ? '#ffffff' : '#666'
+        },
+        grid: {
+          color: darkMode ? '#333' : '#ddd'
+        },
+        ticks: {
+          color: darkMode ? '#ffffff' : '#666'
         }
       }
     }
@@ -159,10 +199,21 @@ const Benchmark = () => {
     plugins: {
       legend: {
         position: 'top',
+        labels: {
+          color: darkMode ? '#ffffff' : '#666'
+        }
       },
       title: {
         display: true,
-        text: 'JavaScript vs Best C++ Performance'
+        text: 'JavaScript vs Best C++ Performance',
+        color: darkMode ? '#ffffff' : '#333'
+      },
+      tooltip: {
+        backgroundColor: darkMode ? '#000000' : 'rgba(0, 0, 0, 0.7)',
+        titleColor: darkMode ? '#ffffff' : '#fff',
+        bodyColor: darkMode ? '#ffffff' : '#fff',
+        borderColor: darkMode ? '#333' : 'rgba(0, 0, 0, 0.1)',
+        borderWidth: 1
       }
     },
     scales: {
@@ -170,7 +221,22 @@ const Benchmark = () => {
         beginAtZero: true,
         title: {
           display: true,
-          text: 'Execution Time (ms)'
+          text: 'Execution Time (ms)',
+          color: darkMode ? '#ffffff' : '#666'
+        },
+        grid: {
+          color: darkMode ? '#333' : '#ddd'
+        },
+        ticks: {
+          color: darkMode ? '#ffffff' : '#666'
+        }
+      },
+      x: {
+        grid: {
+          color: darkMode ? '#333' : '#ddd'
+        },
+        ticks: {
+          color: darkMode ? '#ffffff' : '#666'
         }
       }
     }
@@ -326,7 +392,7 @@ const Benchmark = () => {
             {bestCpp && bestCpp.time !== Infinity && (
               <>
                 <p>Best C++ execution time: <strong>{bestCpp.time.toFixed(2)} ms</strong> with {bestCpp.threads} threads</p>
-                <p>Performance ratio: JavaScript is <strong>{(benchmarkResults.javascript.statistics.avg / bestCpp.time).toFixed(2)}x</strong> slower than best C++ implementation</p>
+                <p>Performance ratio: C++ is <strong>{(benchmarkResults.javascript.statistics.avg / bestCpp.time).toFixed(2)}x</strong> faster than JavaScript</p>
               </>
             )}
           </div>
