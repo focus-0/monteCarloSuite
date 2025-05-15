@@ -254,13 +254,22 @@ const BlackScholes = () => {
   // Format validation status with color
   const formatValidationStatus = (isWithinConfidenceInterval) => {
     return isWithinConfidenceInterval ? 
-      <span style={{ color: 'green' }}>PASS</span> : 
-      <span style={{ color: 'red' }}>FAIL</span>;
+      <span className="validation-success">PASS</span> : 
+      <span className="validation-error">FAIL</span>;
   };
 
   // Format error percentage
   const formatErrorPercentage = (error) => {
-    return (error * 100).toFixed(4) + '%';
+    const errorPercentage = (error * 100).toFixed(4);
+    let className = 'validation-success';
+    
+    if (error > 0.05) {
+      className = 'validation-error';
+    } else if (error > 0.01) {
+      className = 'validation-warning';
+    }
+    
+    return <span className={className}>{errorPercentage}%</span>;
   };
 
   // Chart data for visualization
@@ -304,8 +313,8 @@ const BlackScholes = () => {
       </div>
 
       {activeTab === 'simulator' && (
-        <div className="simulator-container">
-          <div className="form-container">
+        <div className="two-column-layout">
+          <div className="input-column">
             <h2>Black-Scholes Option Calculator</h2>
             <p className="implementation-info">
               Using {implementationStatus.default_implementation.toUpperCase()} implementation
@@ -452,17 +461,17 @@ const BlackScholes = () => {
                 />
               </div>
               
-              <button type="submit" disabled={loading}>
-                {loading ? 'Calculating...' : 'Calculate Option Price'}
+              <button type="submit" className="run-button" disabled={loading}>
+                {loading ? 'Running Simulation...' : 'Run Simulation'}
               </button>
             </form>
           </div>
           
-          <div className="results-container">
+          <div className="results-column">
             {error && <div className="error-message">{error}</div>}
-            {result && (
+            {result ? (
               <div className="results">
-                <h3>Results</h3>
+                <h3>Simulation Results</h3>
                 <div className="result-summary">
                   <p>
                     <strong>Option Price:</strong> ${result.optionPrice.toFixed(4)}
@@ -516,6 +525,11 @@ const BlackScholes = () => {
                   />
                 </div>
               </div>
+            ) : (
+              <div className="no-results">
+                <h3>Simulation Results</h3>
+                <p>Enter parameters on the left and click "Run Simulation" to see results here.</p>
+              </div>
             )}
           </div>
         </div>
@@ -561,69 +575,76 @@ const BlackScholes = () => {
           )}
           
           {historyLoading ? (
-            <p>Loading history...</p>
+            <div className="loading-indicator">
+              <div className="spinner"></div>
+              <p>Loading history...</p>
+            </div>
           ) : history.length === 0 ? (
-            <p>No simulations found.</p>
+            <p className="no-history">No simulations found.</p>
           ) : (
-            <div className="history-list">
-              {history.map((item) => (
-                <div className="history-item" key={item._id}>
-                  <h3>{item.name}</h3>
-                  <p className="timestamp">
-                    Run on: {formatDate(item.createdAt)}
-                  </p>
-                  {item.description && (
-                    <p className="description">{item.description}</p>
-                  )}
-                  <div className="parameters">
-                    <p>
-                      <strong>Stock Price:</strong> ${item.parameters.S0}
-                    </p>
-                    <p>
-                      <strong>Strike Price:</strong> ${item.parameters.K}
-                    </p>
-                    <p>
-                      <strong>Interest Rate:</strong> {item.parameters.r}
-                    </p>
-                    <p>
-                      <strong>Volatility:</strong> {item.parameters.sigma}
-                    </p>
-                    <p>
-                      <strong>Time to Maturity:</strong> {item.parameters.T} years
-                    </p>
-                    <p>
-                      <strong>Option Type:</strong> {item.parameters.isCall ? 'Call' : 'Put'}
-                    </p>
-                    <p>
-                      <strong>Monte Carlo Trials:</strong> {item.parameters.numTrials}
-                    </p>
-                  </div>
-                  <div className="results-summary">
-                    <p>
-                      <strong>Option Price:</strong> ${item.result.optionPrice.toFixed(4)}
-                    </p>
-                    {item.result.validation && (
-                      <p>
-                        <strong>Validation:</strong> {item.result.validation.isWithinConfidenceInterval ? 'PASS' : 'FAIL'}
-                        {' '}(Error: {formatErrorPercentage(item.result.validation.relativeError)})
-                      </p>
-                    )}
-                  </div>
-                  {item.tags && item.tags.length > 0 && (
-                    <div className="tags">
-                      {item.tags.map((tag, index) => (
-                        <span key={index} className="tag">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <div className="history-actions">
-                    <button onClick={() => loadSimulation(item)}>Load</button>
-                    <button onClick={() => startEditing(item)}>Edit</button>
-                  </div>
-                </div>
-              ))}
+            <div className="history-table-container">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Date</th>
+                    <th>Option Type</th>
+                    <th>Stock/Strike</th>
+                    <th>Parameters</th>
+                    <th>Option Price</th>
+                    <th>Validation</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Sort history to show latest first */}
+                  {[...history].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map((item) => (
+                    <tr key={item._id} className="history-row">
+                      <td>
+                        <div className="simulation-name">{item.name}</div>
+                        {item.description && (
+                          <div className="description-tooltip">
+                            <span className="info-icon">ⓘ</span>
+                            <div className="tooltip-content">{item.description}</div>
+                          </div>
+                        )}
+                      </td>
+                      <td>{formatDate(item.createdAt)}</td>
+                      <td>{item.parameters.isCall ? 'Call' : 'Put'}</td>
+                      <td>${item.parameters.S0} / ${item.parameters.K}</td>
+                      <td>
+                        <div className="parameter-cell">
+                          <div>r: {item.parameters.r}</div>
+                          <div>σ: {item.parameters.sigma}</div>
+                          <div>T: {item.parameters.T}y</div>
+                          <div>Trials: {item.parameters.numTrials.toLocaleString()}</div>
+                        </div>
+                      </td>
+                      <td>${item.result.optionPrice.toFixed(4)}</td>
+                      <td>
+                        {item.result.validation ? (
+                          <div className="validation-cell">
+                            {item.result.validation.isWithinConfidenceInterval ? (
+                              <span className="validation-success">PASS</span>
+                            ) : (
+                              <span className="validation-error">FAIL</span>
+                            )}
+                            <span> (Error: {formatErrorPercentage(item.result.validation.relativeError)})</span>
+                          </div>
+                        ) : (
+                          <span>—</span>
+                        )}
+                      </td>
+                      <td>
+                        <div className="action-buttons">
+                          <button className="load-button" onClick={() => loadSimulation(item)}>Load</button>
+                          <button className="edit-button" onClick={() => startEditing(item)}>Edit</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

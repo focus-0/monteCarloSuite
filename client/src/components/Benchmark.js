@@ -58,6 +58,10 @@ const Benchmark = () => {
       .sort((a, b) => parseInt(a) - parseInt(b));
     
     const executionTimes = threadCounts.map(threads => benchmarkResults.cpp[threads].statistics.avg);
+    
+    // Create a flat line for JavaScript execution time
+    const jsExecutionTime = benchmarkResults.javascript.statistics.avg;
+    const jsExecutionTimes = Array(threadCounts.length).fill(jsExecutionTime);
 
     return {
       labels: threadCounts,
@@ -68,30 +72,14 @@ const Benchmark = () => {
           backgroundColor: 'rgba(54, 162, 235, 0.5)',
           borderColor: 'rgba(54, 162, 235, 1)',
           borderWidth: 1
-        }
-      ]
-    };
-  };
-
-  // Prepare chart data for speedup comparison
-  const getSpeedupData = () => {
-    if (!benchmarkResults || !benchmarkResults.speedup) return null;
-
-    const threadCounts = Object.keys(benchmarkResults.speedup)
-      .filter(threads => benchmarkResults.speedup[threads] > 0)
-      .sort((a, b) => parseInt(a) - parseInt(b));
-    
-    const speedups = threadCounts.map(threads => benchmarkResults.speedup[threads]);
-
-    return {
-      labels: threadCounts,
-      datasets: [
+        },
         {
-          label: 'Speedup vs JavaScript',
-          data: speedups,
-          backgroundColor: 'rgba(255, 99, 132, 0.5)',
-          borderColor: 'rgba(255, 99, 132, 1)',
-          borderWidth: 1
+          label: 'JavaScript Execution Time (ms)',
+          data: jsExecutionTimes,
+          backgroundColor: 'rgba(255, 206, 86, 0.5)',
+          borderColor: 'rgba(255, 206, 86, 1)',
+          borderWidth: 1,
+          borderDash: [5, 5]
         }
       ]
     };
@@ -166,34 +154,6 @@ const Benchmark = () => {
     }
   };
 
-  const speedupOptions = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'top',
-      },
-      title: {
-        display: true,
-        text: 'Speedup vs JavaScript'
-      }
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        title: {
-          display: true,
-          text: 'Speedup Factor (x times)'
-        }
-      },
-      x: {
-        title: {
-          display: true,
-          text: 'Thread Count'
-        }
-      }
-    }
-  };
-
   const barOptions = {
     responsive: true,
     plugins: {
@@ -217,7 +177,6 @@ const Benchmark = () => {
   };
 
   const threadComparisonData = getThreadComparisonData();
-  const speedupData = getSpeedupData();
   const implementationComparisonData = getImplementationComparisonData();
 
   // Find best C++ performance for summary
@@ -240,28 +199,7 @@ const Benchmark = () => {
     };
   };
 
-  // Get maximum speedup
-  const getMaxSpeedup = () => {
-    if (!benchmarkResults || !benchmarkResults.speedup) return null;
-    
-    let maxSpeedup = 0;
-    let maxThreads = 0;
-    
-    Object.entries(benchmarkResults.speedup).forEach(([threads, speedup]) => {
-      if (speedup > maxSpeedup) {
-        maxSpeedup = speedup;
-        maxThreads = threads;
-      }
-    });
-    
-    return {
-      speedup: maxSpeedup,
-      threads: maxThreads
-    };
-  };
-
   const bestCpp = benchmarkResults ? getBestCppPerformance() : null;
-  const maxSpeedup = benchmarkResults ? getMaxSpeedup() : null;
 
   return (
     <div className="benchmark-container">
@@ -388,10 +326,7 @@ const Benchmark = () => {
             {bestCpp && bestCpp.time !== Infinity && (
               <>
                 <p>Best C++ execution time: <strong>{bestCpp.time.toFixed(2)} ms</strong> with {bestCpp.threads} threads</p>
-                
-                {maxSpeedup && (
-                  <p>Maximum speedup: <strong>{maxSpeedup.speedup.toFixed(2)}x</strong> with {maxSpeedup.threads} threads</p>
-                )}
+                <p>Performance ratio: JavaScript is <strong>{(benchmarkResults.javascript.statistics.avg / bestCpp.time).toFixed(2)}x</strong> slower than best C++ implementation</p>
               </>
             )}
           </div>
@@ -399,15 +334,8 @@ const Benchmark = () => {
           <div className="charts-container">
             {threadComparisonData && (
               <div className="chart">
-                <h4>C++ Performance by Thread Count</h4>
+                <h4>Performance by Thread Count</h4>
                 <Line data={threadComparisonData} options={lineOptions} />
-              </div>
-            )}
-            
-            {speedupData && (
-              <div className="chart">
-                <h4>C++ Speedup vs JavaScript</h4>
-                <Line data={speedupData} options={speedupOptions} />
               </div>
             )}
             
@@ -430,7 +358,7 @@ const Benchmark = () => {
                   <th>Min Time (ms)</th>
                   <th>Max Time (ms)</th>
                   <th>Option Price</th>
-                  <th>Speedup vs JS</th>
+                  <th>JS/C++ Ratio</th>
                 </tr>
               </thead>
               <tbody>
@@ -456,7 +384,7 @@ const Benchmark = () => {
                       <td>{data.error ? 'N/A' : data.runs[0].optionPrice.toFixed(6)}</td>
                       <td>
                         {data.error ? 'N/A' : 
-                          (benchmarkResults.speedup[threads] || 0).toFixed(2) + 'x'}
+                          (benchmarkResults.javascript.statistics.avg / data.statistics.avg).toFixed(2) + 'x'}
                       </td>
                     </tr>
                   ))
