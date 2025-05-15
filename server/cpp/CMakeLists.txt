@@ -5,25 +5,17 @@ project(MonteCarloCpp VERSION 1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Add optimization flags
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -ffast-math")
+
 # Find packages
 find_package(Threads REQUIRED)
-
-# Include FetchContent for downloading dependencies
-include(FetchContent)
-
-# Download and configure nlohmann/json
-FetchContent_Declare(
-    json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.2
-)
-FetchContent_MakeAvailable(json)
 
 # Add executable
 add_executable(monte_carlo src/monte_carlo.cpp)
 
 # Link libraries
-target_link_libraries(monte_carlo PRIVATE Threads::Threads nlohmann_json::nlohmann_json)
+target_link_libraries(monte_carlo PRIVATE Threads::Threads)
 
 # Install target
 install(TARGETS monte_carlo DESTINATION bin) 
