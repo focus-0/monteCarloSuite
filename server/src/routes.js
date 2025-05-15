@@ -1,4 +1,5 @@
 const express = require('express');
+const { body, validationResult } = require('express-validator');
 const monteCarloService = require('../utils/monte_carlo_service');
 const benchmarkService = require('../utils/benchmark_service');
 const historyRoutes = require('../routes/historyRoutes');
@@ -74,126 +75,194 @@ function validateOptionParams(params) {
   return { isValid: true };
 }
 
-// API endpoint for Black-Scholes calculation
-router.post('/api/black-scholes', async (req, res) => {
-  try {
-    const { S0, K, r, sigma, T, isCall, numTrials, validateWithAnalytical } = req.body;
-    
-    // Validate inputs
-    const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
-    if (!validation.isValid) {
-      return res.status(400).json({ error: validation.error });
-    }
-    
-    // Parse inputs
-    const params = {
-      S0: parseFloat(S0),
-      K: parseFloat(K),
-      r: parseFloat(r),
-      sigma: parseFloat(sigma),
-      T: parseFloat(T),
-      isCall: Boolean(isCall),
-      numTrials: parseInt(numTrials),
-      validateWithAnalytical: Boolean(validateWithAnalytical)
-    };
+// Common validation rules
+const commonValidationRules = [
+  body('S0').isFloat({ min: 0.01 }).withMessage('Stock price must be a positive number'),
+  body('K').isFloat({ min: 0.01 }).withMessage('Strike price must be a positive number'),
+  body('r').isFloat().withMessage('Interest rate must be a number'),
+  body('sigma').isFloat({ min: 0.01 }).withMessage('Volatility must be a positive number'),
+  body('T').isFloat({ min: 0.01 }).withMessage('Time to maturity must be a positive number'),
+  body('isCall').isBoolean().withMessage('isCall must be a boolean value')
+];
 
-    const result = await monteCarloService.calculateOptionPrice(params);
-    res.json(result);
-  } catch (error) {
-    console.error('Error calculating option price:', error);
-    res.status(500).json({ error: 'Failed to calculate option price' });
+// Monte Carlo specific validation
+const monteCarloValidation = [
+  ...commonValidationRules,
+  body('numTrials').isInt({ min: 100, max: 10000000 }).withMessage('Number of trials must be between 100 and 10,000,000')
+];
+
+// Validation error handler
+const handleValidationErrors = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      error: 'Validation error', 
+      details: errors.array().map(err => ({
+        field: err.param,
+        message: err.msg
+      }))
+    });
   }
-});
+  next();
+};
+
+// Sanitize numeric inputs
+const sanitizeNumericInputs = (req, res, next) => {
+  if (req.body.S0) req.body.S0 = parseFloat(req.body.S0);
+  if (req.body.K) req.body.K = parseFloat(req.body.K);
+  if (req.body.r) req.body.r = parseFloat(req.body.r);
+  if (req.body.sigma) req.body.sigma = parseFloat(req.body.sigma);
+  if (req.body.T) req.body.T = parseFloat(req.body.T);
+  if (req.body.numTrials) req.body.numTrials = parseInt(req.body.numTrials);
+  if (req.body.isCall !== undefined) req.body.isCall = Boolean(req.body.isCall);
+  if (req.body.validateWithAnalytical !== undefined) req.body.validateWithAnalytical = Boolean(req.body.validateWithAnalytical);
+  next();
+};
+
+// API endpoint for Black-Scholes calculation
+router.post(
+  '/api/black-scholes', 
+  monteCarloValidation, 
+  handleValidationErrors,
+  sanitizeNumericInputs,
+  async (req, res) => {
+    try {
+      const { S0, K, r, sigma, T, isCall, numTrials, validateWithAnalytical } = req.body;
+      
+      // Double-check validation with our custom validator
+      const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
+      if (!validation.isValid) {
+        return res.status(400).json({ error: validation.error });
+      }
+      
+      // Parse inputs - data already sanitized by middleware
+      const params = {
+        S0,
+        K,
+        r,
+        sigma,
+        T,
+        isCall,
+        numTrials,
+        validateWithAnalytical
+      };
+
+      const result = await monteCarloService.calculateOptionPrice(params);
+      res.json(result);
+    } catch (error) {
+      console.error('Error calculating option price:', error);
+      res.status(500).json({ error: 'Failed to calculate option price' });
+    }
+  }
+);
 
 // API endpoint for analytical Black-Scholes calculation
-router.post('/api/analytical-black-scholes', async (req, res) => {
-  try {
-    const { S0, K, r, sigma, T, isCall } = req.body;
-    
-    // Validate inputs (exclude numTrials which isn't needed for analytical)
-    const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials: 1000 });
-    if (!validation.isValid) {
-      return res.status(400).json({ error: validation.error });
-    }
-    
-    // Parse inputs
-    const params = {
-      S0: parseFloat(S0),
-      K: parseFloat(K),
-      r: parseFloat(r),
-      sigma: parseFloat(sigma),
-      T: parseFloat(T),
-      isCall: Boolean(isCall)
-    };
+router.post(
+  '/api/analytical-black-scholes',
+  commonValidationRules,
+  handleValidationErrors,
+  sanitizeNumericInputs,
+  async (req, res) => {
+    try {
+      const { S0, K, r, sigma, T, isCall } = req.body;
+      
+      // Double-check validation with our custom validator
+      const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials: 1000 });
+      if (!validation.isValid) {
+        return res.status(400).json({ error: validation.error });
+      }
+      
+      // Inputs already sanitized by middleware
+      const params = {
+        S0,
+        K,
+        r,
+        sigma,
+        T,
+        isCall
+      };
 
-    const result = monteCarloService.getAnalyticalPrice(params);
-    res.json(result);
-  } catch (error) {
-    console.error('Error calculating analytical price:', error);
-    res.status(500).json({ error: 'Failed to calculate analytical price' });
+      const result = monteCarloService.getAnalyticalPrice(params);
+      res.json(result);
+    } catch (error) {
+      console.error('Error calculating analytical price:', error);
+      res.status(500).json({ error: 'Failed to calculate analytical price' });
+    }
   }
-});
+);
 
 // API endpoint for model validation
-router.post('/api/validate-model', async (req, res) => {
-  try {
-    const { S0, K, r, sigma, T, isCall, numTrials } = req.body;
-    
-    // Validate inputs
-    const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
-    if (!validation.isValid) {
-      return res.status(400).json({ error: validation.error });
-    }
-    
-    // Parse inputs
-    const params = {
-      S0: parseFloat(S0),
-      K: parseFloat(K),
-      r: parseFloat(r),
-      sigma: parseFloat(sigma),
-      T: parseFloat(T),
-      isCall: Boolean(isCall),
-      numTrials: parseInt(numTrials),
-      validateWithAnalytical: true // Force validation
-    };
+router.post(
+  '/api/validate-model',
+  monteCarloValidation,
+  handleValidationErrors,
+  sanitizeNumericInputs,
+  async (req, res) => {
+    try {
+      const { S0, K, r, sigma, T, isCall, numTrials } = req.body;
+      
+      // Double-check validation with our custom validator
+      const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
+      if (!validation.isValid) {
+        return res.status(400).json({ error: validation.error });
+      }
+      
+      // Inputs already sanitized by middleware
+      const params = {
+        S0,
+        K,
+        r,
+        sigma,
+        T,
+        isCall,
+        numTrials,
+        validateWithAnalytical: true // Force validation
+      };
 
-    const result = await monteCarloService.calculateOptionPrice(params);
-    res.json(result);
-  } catch (error) {
-    console.error('Error validating model:', error);
-    res.status(500).json({ error: 'Failed to validate model' });
+      const result = await monteCarloService.calculateOptionPrice(params);
+      res.json(result);
+    } catch (error) {
+      console.error('Error validating model:', error);
+      res.status(500).json({ error: 'Failed to validate model' });
+    }
   }
-});
+);
 
 // API endpoint for performance benchmarking
-router.post('/api/benchmark', async (req, res) => {
-  try {
-    const { S0, K, r, sigma, T, isCall, numTrials } = req.body;
-    
-    // Validate inputs
-    const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
-    if (!validation.isValid) {
-      return res.status(400).json({ error: validation.error });
-    }
-    
-    // Parse inputs
-    const params = {
-      S0: parseFloat(S0),
-      K: parseFloat(K),
-      r: parseFloat(r),
-      sigma: parseFloat(sigma),
-      T: parseFloat(T),
-      isCall: Boolean(isCall),
-      numTrials: parseInt(numTrials)
-    };
+router.post(
+  '/api/benchmark',
+  monteCarloValidation,
+  handleValidationErrors,
+  sanitizeNumericInputs,
+  async (req, res) => {
+    try {
+      const { S0, K, r, sigma, T, isCall, numTrials } = req.body;
+      
+      // Double-check validation with our custom validator
+      const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
+      if (!validation.isValid) {
+        return res.status(400).json({ error: validation.error });
+      }
+      
+      // Inputs already sanitized by middleware
+      const params = {
+        S0,
+        K,
+        r,
+        sigma,
+        T,
+        isCall,
+        numTrials
+      };
 
-    const result = await benchmarkService.runBenchmark(params);
-    res.json(result);
-  } catch (error) {
-    console.error('Error running benchmark:', error);
-    res.status(500).json({ error: 'Failed to run benchmark' });
+      const result = await benchmarkService.runBenchmark(params);
+      res.json(result);
+    } catch (error) {
+      console.error('Error running benchmark:', error);
+      res.status(500).json({ error: 'Failed to run benchmark' });
+    }
   }
-});
+);
 
 // Endpoint to check which implementation is being used
 router.get('/api/implementation-status', (req, res) => {
