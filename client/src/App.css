@@ -148,6 +148,40 @@ input[type="checkbox"] {
   height: 300px;
 }
 
+/* Implementation Status */
+.implementation-status {
+  margin-left: auto;
+  padding: 0 15px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.cpp-available {
+  background-color: #4caf50;
+  color: white;
+}
+
+.js-only {
+  background-color: #ff9800;
+  color: white;
+}
+
+.cpp-impl {
+  color: #4caf50;
+  font-weight: bold;
+}
+
+.js-impl {
+  color: #ff9800;
+  font-weight: bold;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .two-column-layout {

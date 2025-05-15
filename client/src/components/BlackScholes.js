@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
 import { Line } from 'react-chartjs-2';
@@ -22,6 +22,26 @@ const BlackScholes = () => {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("Missing required parameters");
+  
+  // State for implementation status
+  const [implementationStatus, setImplementationStatus] = useState({
+    cpp_available: false,
+    default_implementation: 'javascript'
+  });
+
+  // Check implementation status on component mount
+  useEffect(() => {
+    const checkImplementation = async () => {
+      try {
+        const response = await axios.get('/api/implementation-status');
+        setImplementationStatus(response.data);
+      } catch (err) {
+        console.error('Error checking implementation status:', err);
+      }
+    };
+    
+    checkImplementation();
+  }, []);
 
   // Handle input changes
   const handleChange = (e) => {
@@ -67,6 +87,12 @@ const BlackScholes = () => {
         <div className="navbar-title">Monte Carlo Simulation Suite</div>
         <div className="navbar-links">
           <a href="#" className="active">Black-Scholes</a>
+        </div>
+        <div className="implementation-status">
+          {implementationStatus.cpp_available ? 
+            <span className="badge cpp-available">C++ Available</span> : 
+            <span className="badge js-only">JavaScript Only</span>
+          }
         </div>
       </div>
 
@@ -197,6 +223,9 @@ const BlackScholes = () => {
                 <p><strong>Option Type:</strong> {formData.isCall ? 'Call' : 'Put'}</p>
                 <p><strong>Option Price:</strong> ${result.optionPrice.toFixed(4)}</p>
                 <p><strong>95% Confidence Interval:</strong> ${result.confidence.lower.toFixed(4)} - ${result.confidence.upper.toFixed(4)}</p>
+                <p><strong>Implementation:</strong> <span className={result.implementation === 'cpp' ? 'cpp-impl' : 'js-impl'}>
+                  {result.implementation === 'cpp' ? 'C++ (Faster)' : 'JavaScript'}
+                </span></p>
                 
                 <div className="chart-container">
                   <Line 
