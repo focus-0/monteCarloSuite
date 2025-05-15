@@ -11,4 +11,7 @@ router.post('/', historyController.saveSimulation);
 // Get a specific simulation by ID
 router.get('/:id', historyController.getSimulationById);
 
+// Update a simulation
+router.put('/:id', historyController.updateSimulation);
+
 module.exports = router; 

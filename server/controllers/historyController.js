@@ -14,12 +14,15 @@ exports.getHistory = async (req, res) => {
 // Save a new simulation to history
 exports.saveSimulation = async (req, res) => {
   try {
-    const { simulationType, parameters, result } = req.body;
+    const { simulationType, parameters, result, name, description, tags } = req.body;
     
     const newSimulation = new SimulationHistory({
       simulationType,
       parameters,
-      result
+      result,
+      name: name || `${simulationType} Simulation`,
+      description: description || '',
+      tags: tags || []
     });
     
     const savedSimulation = await newSimulation.save();
@@ -42,6 +45,29 @@ exports.getSimulationById = async (req, res) => {
     res.json(simulation);
   } catch (error) {
     console.error('Error fetching simulation:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Update a simulation
+exports.updateSimulation = async (req, res) => {
+  try {
+    const { name, description, tags } = req.body;
+    
+    const simulation = await SimulationHistory.findById(req.params.id);
+    
+    if (!simulation) {
+      return res.status(404).json({ message: 'Simulation not found' });
+    }
+    
+    if (name !== undefined) simulation.name = name;
+    if (description !== undefined) simulation.description = description;
+    if (tags !== undefined) simulation.tags = tags;
+    
+    const updatedSimulation = await simulation.save();
+    res.json(updatedSimulation);
+  } catch (error) {
+    console.error('Error updating simulation:', error);
     res.status(500).json({ message: 'Server error' });
   }
 }; 

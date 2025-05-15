@@ -1,6 +1,18 @@
 const mongoose = require('mongoose');
 
 const SimulationHistorySchema = new mongoose.Schema({
+  name: {
+    type: String,
+    default: 'Untitled Simulation'
+  },
+  description: {
+    type: String,
+    default: ''
+  },
+  tags: {
+    type: [String],
+    default: []
+  },
   simulationType: {
     type: String,
     required: true,
