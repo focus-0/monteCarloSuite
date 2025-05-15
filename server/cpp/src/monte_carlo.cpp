@@ -196,12 +196,16 @@ void monte_carlo_black_scholes_mt(double S0, double K, double r, double sigma,
     const double volatility = sigma * sqrt(T);
     const double discount = exp(-r * T);
 
-    // Vector to store partial results from each thread (pre-allocate)
-    std::vector<std::vector<double>> thread_payoffs(num_threads);
-    for (auto &payoffs : thread_payoffs)
+    // Structure to hold thread-local statistical accumulators
+    struct ThreadResult
     {
-        payoffs.reserve(trials_per_thread + 1); // +1 for potential remainder
-    }
+        double sum;
+        double sum_squared;
+        int count;
+    };
+
+    // Vector to store thread results (much smaller than storing all payoffs)
+    std::vector<ThreadResult> thread_results(num_threads, {0.0, 0.0, 0});
 
     // Pre-allocate thread vector
     std::vector<std::thread> threads;
@@ -210,14 +214,14 @@ void monte_carlo_black_scholes_mt(double S0, double K, double r, double sigma,
     // Function to be executed by each thread
     auto thread_func = [&](int thread_id, int start_trial, int end_trial)
     {
+        // Initialize thread-local accumulators
+        double local_sum = 0.0;
+        double local_sum_squared = 0.0;
+        int local_count = 0;
+
         // Initialize random number generator for this thread
         std::mt19937_64 gen(std::chrono::high_resolution_clock::now().time_since_epoch().count() + thread_id); // Better seed
         std::normal_distribution<> norm_dist(0.0, 1.0);
-
-        // Get reference to this thread's result vector
-        auto &local_payoffs = thread_payoffs[thread_id];
-        local_payoffs.clear();
-        local_payoffs.reserve(end_trial - start_trial);
 
         // Pre-generate batch of random numbers - use array for stack allocation
         ALIGN_DATA(64)
@@ -248,10 +252,18 @@ void monte_carlo_black_scholes_mt(double S0, double K, double r, double sigma,
                 // Calculate stock price at maturity (minimizing operations)
                 const double ST = S0 * exp(drift + volatility * z);
 
-                // Calculate payoff using inline function and push to results
-                local_payoffs.push_back(calculate_payoff(ST, K, isCall));
+                // Calculate payoff using inline function
+                const double payoff = calculate_payoff(ST, K, isCall);
+
+                // Update local accumulators directly
+                local_sum += payoff;
+                local_sum_squared += payoff * payoff;
+                local_count++;
             }
         }
+
+        // Store thread results (only 3 values, not an entire vector)
+        thread_results[thread_id] = {local_sum, local_sum_squared, local_count};
     };
 
     // Launch threads with better work distribution
@@ -270,44 +282,28 @@ void monte_carlo_black_scholes_mt(double S0, double K, double r, double sigma,
         thread.join();
     }
 
-    // Combine results from all threads (minimize copying)
-    // First calculate total size needed
-    size_t total_size = 0;
-    for (const auto &thread_result : thread_payoffs)
+    // Combine results from all threads (much faster now)
+    double total_sum = 0.0;
+    double total_sum_squared = 0.0;
+    int total_count = 0;
+
+    for (const auto &result : thread_results)
     {
-        total_size += thread_result.size();
+        total_sum += result.sum;
+        total_sum_squared += result.sum_squared;
+        total_count += result.count;
     }
 
-    // Pre-allocate combined vector with alignment
-    ALIGN_DATA(64)
-    std::vector<double> all_payoffs;
-    all_payoffs.reserve(total_size);
-
-    // Move data from thread vectors
-    for (auto &thread_result : thread_payoffs)
-    {
-        all_payoffs.insert(all_payoffs.end(),
-                           std::make_move_iterator(thread_result.begin()),
-                           std::make_move_iterator(thread_result.end()));
-    }
-
-    // Calculate mean using std::accumulate for better optimization
-    double sum = std::accumulate(all_payoffs.begin(), all_payoffs.end(), 0.0);
-    double mean = sum / all_payoffs.size();
+    // Calculate mean
+    double mean = total_sum / total_count;
     double discounted_mean = mean * discount;
 
-    // Calculate variance and standard deviation with optimized loop
-    double variance = 0.0;
-    for (const auto &payoff : all_payoffs)
-    {
-        double diff = payoff - mean;
-        variance += diff * diff; // Avoid pow() function call
-    }
-    variance /= (all_payoffs.size() - 1);
+    // Calculate variance using E[X²] - (E[X])²
+    double variance = (total_sum_squared / total_count) - (mean * mean);
     double std_dev = sqrt(variance);
 
     // Calculate 95% confidence interval
-    double margin_of_error = 1.96 * (std_dev / sqrt(all_payoffs.size())) * discount;
+    double margin_of_error = 1.96 * (std_dev / sqrt(total_count)) * discount;
 
     // Set output values
     price = discounted_mean;
