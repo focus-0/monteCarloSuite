@@ -29,6 +29,13 @@ const BlackScholes = () => {
     default_implementation: 'javascript'
   });
 
+  // State for active tab
+  const [activeTab, setActiveTab] = useState('simulator');
+  
+  // State for history
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   // Check implementation status on component mount
   useEffect(() => {
     const checkImplementation = async () => {
@@ -42,6 +49,26 @@ const BlackScholes = () => {
     
     checkImplementation();
   }, []);
+
+  // Fetch history when history tab is active
+  useEffect(() => {
+    if (activeTab === 'history') {
+      fetchHistory();
+    }
+  }, [activeTab]);
+
+  // Fetch simulation history
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const response = await axios.get('/api/history');
+      setHistory(response.data);
+    } catch (err) {
+      console.error('Error fetching history:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   // Handle input changes
   const handleChange = (e) => {
@@ -61,12 +88,26 @@ const BlackScholes = () => {
     try {
       const response = await axios.post('/api/black-scholes', formData);
       setResult(response.data);
+      
+      // Save to history
+      await axios.post('/api/history', {
+        simulationType: 'black-scholes',
+        parameters: formData,
+        result: response.data
+      });
     } catch (err) {
       setError('Error calculating option price. Please check your inputs and try again.');
       console.error('Error:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  // Load a simulation from history
+  const loadSimulation = (simulation) => {
+    setFormData(simulation.parameters);
+    setResult(simulation.result);
+    setActiveTab('simulator');
   };
 
   // Chart data for visualization
@@ -81,12 +122,31 @@ const BlackScholes = () => {
     }]
   } : { labels: [], datasets: [] };
 
+  // Format date for display
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleString();
+  };
+
   return (
     <div>
       <div className="navbar">
         <div className="navbar-title">Monte Carlo Simulation Suite</div>
         <div className="navbar-links">
-          <a href="#" className="active">Black-Scholes</a>
+          <a 
+            href="#" 
+            className={activeTab === 'simulator' ? 'active' : ''} 
+            onClick={() => setActiveTab('simulator')}
+          >
+            Black-Scholes
+          </a>
+          <a 
+            href="#" 
+            className={activeTab === 'history' ? 'active' : ''} 
+            onClick={() => setActiveTab('history')}
+          >
+            History
+          </a>
         </div>
         <div className="implementation-status">
           {implementationStatus.cpp_available ? 
@@ -97,151 +157,202 @@ const BlackScholes = () => {
       </div>
 
       <div className="content">
-        <h1>Black-Scholes Option Pricing</h1>
-        <p>This simulation uses Monte Carlo methods to price European options using the Black-Scholes model.</p>
-        
-        <div className="two-column-layout">
-          <div className="input-column">
-            <div className="option-form">
-              <div className="form-group">
-                <label htmlFor="S0">Initial Stock Price (S₀)</label>
-                <input
-                  type="number"
-                  id="S0"
-                  name="S0"
-                  value={formData.S0}
-                  onChange={handleChange}
-                  step="0.01"
-                  min="0.01"
-                  required
-                />
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="K">Strike Price (K)</label>
-                <input
-                  type="number"
-                  id="K"
-                  name="K"
-                  value={formData.K}
-                  onChange={handleChange}
-                  step="0.01"
-                  min="0.01"
-                  required
-                />
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="r">Risk-Free Interest Rate (r)</label>
-                <input
-                  type="number"
-                  id="r"
-                  name="r"
-                  value={formData.r}
-                  onChange={handleChange}
-                  step="0.001"
-                  min="0"
-                  max="1"
-                  required
-                />
-                <div className="helper-text">Enter as a decimal (e.g., 0.05 for 5%)</div>
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="sigma">Volatility (σ)</label>
-                <input
-                  type="number"
-                  id="sigma"
-                  name="sigma"
-                  value={formData.sigma}
-                  onChange={handleChange}
-                  step="0.01"
-                  min="0.01"
-                  max="2"
-                  required
-                />
-                <div className="helper-text">Enter as a decimal (e.g., 0.2 for 20%)</div>
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="T">Time to Maturity (T) in years</label>
-                <input
-                  type="number"
-                  id="T"
-                  name="T"
-                  value={formData.T}
-                  onChange={handleChange}
-                  step="0.01"
-                  min="0.01"
-                  required
-                />
-              </div>
-              
-              <div className="form-group checkbox-group">
-                <label>
-                  <input
-                    type="checkbox"
-                    name="isCall"
-                    checked={formData.isCall}
-                    onChange={handleChange}
-                  />
-                  Call Option (unchecked for Put Option)
-                </label>
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="numTrials">Number of Trials</label>
-                <input
-                  type="number"
-                  id="numTrials"
-                  name="numTrials"
-                  value={formData.numTrials}
-                  onChange={handleChange}
-                  step="1000"
-                  min="1000"
-                  max="100000"
-                  required
-                />
-              </div>
-              
-              <button className="run-button" type="button" onClick={handleSubmit} disabled={loading}>
-                {loading ? 'Calculating...' : 'Run Simulation'}
-              </button>
-            </div>
-          </div>
-          
-          <div className="results-column">
-            {error && (
-              <div className="error-message">
-                {error}
-              </div>
-            )}
+        {activeTab === 'simulator' ? (
+          <>
+            <h1>Black-Scholes Option Pricing</h1>
+            <p>This simulation uses Monte Carlo methods to price European options using the Black-Scholes model.</p>
             
-            {result && (
-              <div className="results">
-                <h3>Results</h3>
-                <p><strong>Option Type:</strong> {formData.isCall ? 'Call' : 'Put'}</p>
-                <p><strong>Option Price:</strong> ${result.optionPrice.toFixed(4)}</p>
-                <p><strong>95% Confidence Interval:</strong> ${result.confidence.lower.toFixed(4)} - ${result.confidence.upper.toFixed(4)}</p>
-                <p><strong>Implementation:</strong> <span className={result.implementation === 'cpp' ? 'cpp-impl' : 'js-impl'}>
-                  {result.implementation === 'cpp' ? 'C++ (Faster)' : 'JavaScript'}
-                </span></p>
-                
-                <div className="chart-container">
-                  <Line 
-                    data={chartData} 
-                    options={{
-                      responsive: true,
-                      plugins: {
-                        title: { display: true, text: 'Option Price with Confidence Interval' }
-                      }
-                    }} 
-                  />
+            <div className="two-column-layout">
+              <div className="input-column">
+                <div className="option-form">
+                  <div className="form-group">
+                    <label htmlFor="S0">Initial Stock Price (S₀)</label>
+                    <input
+                      type="number"
+                      id="S0"
+                      name="S0"
+                      value={formData.S0}
+                      onChange={handleChange}
+                      step="0.01"
+                      min="0.01"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="K">Strike Price (K)</label>
+                    <input
+                      type="number"
+                      id="K"
+                      name="K"
+                      value={formData.K}
+                      onChange={handleChange}
+                      step="0.01"
+                      min="0.01"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="r">Risk-Free Interest Rate (r)</label>
+                    <input
+                      type="number"
+                      id="r"
+                      name="r"
+                      value={formData.r}
+                      onChange={handleChange}
+                      step="0.001"
+                      min="0"
+                      max="1"
+                      required
+                    />
+                    <div className="helper-text">Enter as a decimal (e.g., 0.05 for 5%)</div>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="sigma">Volatility (σ)</label>
+                    <input
+                      type="number"
+                      id="sigma"
+                      name="sigma"
+                      value={formData.sigma}
+                      onChange={handleChange}
+                      step="0.01"
+                      min="0.01"
+                      max="2"
+                      required
+                    />
+                    <div className="helper-text">Enter as a decimal (e.g., 0.2 for 20%)</div>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="T">Time to Maturity (T) in years</label>
+                    <input
+                      type="number"
+                      id="T"
+                      name="T"
+                      value={formData.T}
+                      onChange={handleChange}
+                      step="0.01"
+                      min="0.01"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="form-group checkbox-group">
+                    <label>
+                      <input
+                        type="checkbox"
+                        name="isCall"
+                        checked={formData.isCall}
+                        onChange={handleChange}
+                      />
+                      Call Option (unchecked for Put Option)
+                    </label>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="numTrials">Number of Trials</label>
+                    <input
+                      type="number"
+                      id="numTrials"
+                      name="numTrials"
+                      value={formData.numTrials}
+                      onChange={handleChange}
+                      step="1000"
+                      min="1000"
+                      max="100000"
+                      required
+                    />
+                  </div>
+                  
+                  <button className="run-button" type="button" onClick={handleSubmit} disabled={loading}>
+                    {loading ? 'Calculating...' : 'Run Simulation'}
+                  </button>
                 </div>
               </div>
+              
+              <div className="results-column">
+                {error && (
+                  <div className="error-message">
+                    {error}
+                  </div>
+                )}
+                
+                {result && (
+                  <div className="results">
+                    <h3>Results</h3>
+                    <p><strong>Option Type:</strong> {formData.isCall ? 'Call' : 'Put'}</p>
+                    <p><strong>Option Price:</strong> ${result.optionPrice.toFixed(4)}</p>
+                    <p><strong>95% Confidence Interval:</strong> ${result.confidence.lower.toFixed(4)} - ${result.confidence.upper.toFixed(4)}</p>
+                    <p><strong>Implementation:</strong> <span className={result.implementation === 'cpp' ? 'cpp-impl' : 'js-impl'}>
+                      {result.implementation === 'cpp' ? 'C++ (Faster)' : 'JavaScript'}
+                    </span></p>
+                    
+                    <div className="chart-container">
+                      <Line 
+                        data={chartData} 
+                        options={{
+                          responsive: true,
+                          plugins: {
+                            title: { display: true, text: 'Option Price with Confidence Interval' }
+                          }
+                        }} 
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="history-section">
+            <h1>Simulation History</h1>
+            <p>View and reload your past simulations.</p>
+            
+            {historyLoading ? (
+              <div className="loading">Loading history...</div>
+            ) : history.length === 0 ? (
+              <div className="no-history">No simulation history found. Run some simulations to see them here.</div>
+            ) : (
+              <div className="history-list">
+                <table className="history-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Type</th>
+                      <th>Option Type</th>
+                      <th>Stock Price</th>
+                      <th>Strike Price</th>
+                      <th>Result</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((item) => (
+                      <tr key={item._id}>
+                        <td>{formatDate(item.createdAt)}</td>
+                        <td>{item.simulationType === 'black-scholes' ? 'Black-Scholes' : item.simulationType}</td>
+                        <td>{item.parameters.isCall ? 'Call' : 'Put'}</td>
+                        <td>${parseFloat(item.parameters.S0).toFixed(2)}</td>
+                        <td>${parseFloat(item.parameters.K).toFixed(2)}</td>
+                        <td>${parseFloat(item.result.optionPrice).toFixed(4)}</td>
+                        <td>
+                          <button 
+                            className="load-button" 
+                            onClick={() => loadSimulation(item)}
+                          >
+                            Load
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -2,6 +2,10 @@ const express = require('express');
 const cors = require('cors');
 const routes = require('./src/routes');
 const monteCarloService = require('./utils/monte_carlo_service');
+const connectDB = require('./config/db');
+
+// Connect to MongoDB
+connectDB();
 
 const app = express();
 

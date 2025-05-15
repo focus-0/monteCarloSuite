@@ -1,5 +1,6 @@
 const express = require('express');
 const monteCarloService = require('../utils/monte_carlo_service');
+const historyRoutes = require('../routes/historyRoutes');
 
 const router = express.Router();
 
@@ -36,5 +37,8 @@ router.post('/api/black-scholes', async (req, res) => {
 router.get('/api/implementation-status', (req, res) => {
   res.json(monteCarloService.getImplementationStatus());
 });
+
+// History routes
+router.use('/api/history', historyRoutes);
 
 module.exports = router; 
