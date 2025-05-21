@@ -6,6 +6,11 @@ const historyRoutes = require('../routes/historyRoutes');
 
 const router = express.Router();
 
+// Health check endpoint
+router.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
+
 /**
  * Validate option pricing parameters
  * @param {Object} params - Parameters to validate

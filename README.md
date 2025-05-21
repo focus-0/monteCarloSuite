@@ -21,7 +21,7 @@ A web application for pricing options using Monte Carlo simulation with the Blac
 
 ## Technologies Used
 
-- **MongoDB**: Database (not currently used in this version)
+- **MongoDB**: Database 
 - **Express.js**: Backend framework
 - **React**: Frontend library
 - **Node.js**: JavaScript runtime
@@ -70,6 +70,8 @@ If the C++ backend fails to build, the application will automatically fall back 
 
 ### Running the Application
 
+#### Running Locally
+
 From the root directory:
 
 ```bash
@@ -84,6 +86,23 @@ npm run client
 ```
 
 The server will run on port 5001, and the client will run on port 3000.
+
+#### Running with Docker
+
+The application can be deployed using Docker:
+
+```bash
+# Build and start the application
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the application
+docker-compose down
+```
+
+The application will be available at http://localhost:5001.
 
 ## How It Works
 

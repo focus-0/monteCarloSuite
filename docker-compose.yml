@@ -1,0 +1,46 @@
+services:
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+    networks:
+      - monte-carlo-network
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=production
+      - PORT=5001
+      - MONGO_URI=mongodb://mongo:27017/montecarlo
+    ports:
+      - "5001:5001"
+    depends_on:
+      - mongo
+    networks:
+      - monte-carlo-network
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:6
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo-data:/data/db
+    command: mongod --port 27017
+    networks:
+      - monte-carlo-network
+    restart: unless-stopped
+
+networks:
+  monte-carlo-network:
+    driver: bridge
+
+volumes:
+  mongo-data: 
