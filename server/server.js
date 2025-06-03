@@ -32,12 +32,6 @@ app.use('/api/', apiLimiter);
 // Body parser
 app.use(express.json({ limit: '10kb' })); // Body limit is 10kb
 
-// Data sanitization against NoSQL query injection
-
-
-
-// Data sanitization against XSS
-app.use(xss());
 
 // CORS configuration
 app.use(cors({
