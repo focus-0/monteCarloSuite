@@ -1,12 +1,16 @@
 const mongoose = require('mongoose');
 
 const connectDB = async () => {
-  const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/montecarlo';
-  
+  const mongoURI = process.env.MONGO_URI;
+
+  if (!mongoURI) {
+    console.error("MONGO_URI is not set in environment variables");
+    process.exit(1);
+  }
+
   try {
     const conn = await mongoose.connect(mongoURI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
+      dbName: 'montecarlo',
     });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
@@ -15,4 +19,4 @@ const connectDB = async () => {
   }
 };
 
-module.exports = connectDB; 
+module.exports = connectDB;
