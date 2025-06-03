@@ -1,16 +1,12 @@
-import React, { useState, useContext, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Line, Bar } from 'react-chartjs-2';
-import { ThemeContext } from '../ThemeContext';
 
 // Register ChartJS components
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
 
 const Benchmark = () => {
-  // Get dark mode state from context
-  const { darkMode } = useContext(ThemeContext);
-
   // State for form inputs
   const [formData, setFormData] = useState({
     S0: 100,
@@ -26,17 +22,6 @@ const Benchmark = () => {
   const [benchmarkResults, setBenchmarkResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-
-  // Apply dark mode theme to Chart.js
-  useEffect(() => {
-    // Set global defaults for Chart.js
-    ChartJS.defaults.color = darkMode ? '#ffffff' : '#666';
-    ChartJS.defaults.borderColor = darkMode ? '#444' : '#ddd';
-    ChartJS.defaults.backgroundColor = darkMode ? '#121212' : '#fff';
-    
-    // Don't try to access Chart.instances directly - it's not available in newer Chart.js
-    // Charts will automatically use the global defaults when they're created
-  }, [darkMode]);
 
   // Handle input changes
   const handleChange = (e) => {
@@ -84,15 +69,15 @@ const Benchmark = () => {
         {
           label: 'C++ Execution Time (ms)',
           data: executionTimes,
-          backgroundColor: darkMode ? 'rgba(0, 156, 255, 0.7)' : 'rgba(54, 162, 235, 0.5)',
-          borderColor: darkMode ? 'rgba(0, 156, 255, 1)' : 'rgba(54, 162, 235, 1)',
+          backgroundColor: 'rgba(54, 162, 235, 0.5)',
+          borderColor: 'rgba(54, 162, 235, 1)',
           borderWidth: 1
         },
         {
           label: 'JavaScript Execution Time (ms)',
           data: jsExecutionTimes,
-          backgroundColor: darkMode ? 'rgba(220, 53, 69, 0.7)' : 'rgba(220, 53, 69, 0.5)',
-          borderColor: darkMode ? 'rgba(220, 53, 69, 1)' : 'rgba(220, 53, 69, 1)',
+          backgroundColor: 'rgba(220, 53, 69, 0.5)',
+          borderColor: 'rgba(220, 53, 69, 1)',
           borderWidth: 1,
           borderDash: [5, 5]
         }
@@ -127,12 +112,12 @@ const Benchmark = () => {
             bestCppTime === Infinity ? 0 : bestCppTime
           ],
           backgroundColor: [
-            darkMode ? 'rgba(220, 53, 69, 0.7)' : 'rgba(220, 53, 69, 0.5)',
-            darkMode ? 'rgba(0, 156, 255, 0.7)' : 'rgba(54, 162, 235, 0.5)'
+            'rgba(220, 53, 69, 0.5)',
+            'rgba(54, 162, 235, 0.5)'
           ],
           borderColor: [
-            darkMode ? 'rgba(220, 53, 69, 1)' : 'rgba(220, 53, 69, 1)',
-            darkMode ? 'rgba(0, 156, 255, 1)' : 'rgba(54, 162, 235, 1)'
+            'rgba(220, 53, 69, 1)',
+            'rgba(54, 162, 235, 1)'
           ],
           borderWidth: 1
         }
@@ -145,22 +130,11 @@ const Benchmark = () => {
     responsive: true,
     plugins: {
       legend: {
-        position: 'top',
-        labels: {
-          color: darkMode ? '#ffffff' : '#666'
-        }
+        position: 'top'
       },
       title: {
         display: true,
-        text: 'Performance by Thread Count',
-        color: darkMode ? '#ffffff' : '#333'
-      },
-      tooltip: {
-        backgroundColor: darkMode ? '#000000' : 'rgba(0, 0, 0, 0.7)',
-        titleColor: darkMode ? '#ffffff' : '#fff',
-        bodyColor: darkMode ? '#ffffff' : '#fff',
-        borderColor: darkMode ? '#333' : 'rgba(0, 0, 0, 0.1)',
-        borderWidth: 1
+        text: 'Performance by Thread Count'
       }
     },
     scales: {
@@ -168,27 +142,13 @@ const Benchmark = () => {
         beginAtZero: true,
         title: {
           display: true,
-          text: 'Execution Time (ms)',
-          color: darkMode ? '#ffffff' : '#666'
-        },
-        grid: {
-          color: darkMode ? '#333' : '#ddd'
-        },
-        ticks: {
-          color: darkMode ? '#ffffff' : '#666'
+          text: 'Execution Time (ms)'
         }
       },
       x: {
         title: {
           display: true,
-          text: 'Thread Count',
-          color: darkMode ? '#ffffff' : '#666'
-        },
-        grid: {
-          color: darkMode ? '#333' : '#ddd'
-        },
-        ticks: {
-          color: darkMode ? '#ffffff' : '#666'
+          text: 'Thread Count'
         }
       }
     }
@@ -198,22 +158,11 @@ const Benchmark = () => {
     responsive: true,
     plugins: {
       legend: {
-        position: 'top',
-        labels: {
-          color: darkMode ? '#ffffff' : '#666'
-        }
+        position: 'top'
       },
       title: {
         display: true,
-        text: 'JavaScript vs Best C++ Performance',
-        color: darkMode ? '#ffffff' : '#333'
-      },
-      tooltip: {
-        backgroundColor: darkMode ? '#000000' : 'rgba(0, 0, 0, 0.7)',
-        titleColor: darkMode ? '#ffffff' : '#fff',
-        bodyColor: darkMode ? '#ffffff' : '#fff',
-        borderColor: darkMode ? '#333' : 'rgba(0, 0, 0, 0.1)',
-        borderWidth: 1
+        text: 'JavaScript vs Best C++ Performance'
       }
     },
     scales: {
@@ -221,22 +170,7 @@ const Benchmark = () => {
         beginAtZero: true,
         title: {
           display: true,
-          text: 'Execution Time (ms)',
-          color: darkMode ? '#ffffff' : '#666'
-        },
-        grid: {
-          color: darkMode ? '#333' : '#ddd'
-        },
-        ticks: {
-          color: darkMode ? '#ffffff' : '#666'
-        }
-      },
-      x: {
-        grid: {
-          color: darkMode ? '#333' : '#ddd'
-        },
-        ticks: {
-          color: darkMode ? '#ffffff' : '#666'
+          text: 'Execution Time (ms)'
         }
       }
     }
@@ -464,4 +398,4 @@ const Benchmark = () => {
   );
 };
 
-export default Benchmark; 
+export default Benchmark;

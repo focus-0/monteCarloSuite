@@ -653,4 +653,4 @@ const BlackScholes = () => {
   );
 };
 
-export default BlackScholes; 
+export default BlackScholes;
