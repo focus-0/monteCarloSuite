@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/Users/ayushlohumi/Desktop/MonteCarloSuite/build",
+  "command": "/usr/bin/clang++    -O3 -march=native -ffast-math -g -std=gnu++17 -arch arm64 -o CMakeFiles/monte_carlo.dir/src/monte_carlo.cpp.o -c /Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/src/monte_carlo.cpp",
+  "file": "/Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/src/monte_carlo.cpp",
+  "output": "CMakeFiles/monte_carlo.dir/src/monte_carlo.cpp.o"
+}
+]
