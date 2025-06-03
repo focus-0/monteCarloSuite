@@ -4,4 +4,3 @@ npm-debug.log
 .gitignore
 .DS_Store
 .env
-cpp/build 
