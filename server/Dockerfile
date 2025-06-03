@@ -18,10 +18,10 @@ RUN npm install --no-optional && npm cache clean --force
 COPY . .
 
 # # Make build.sh executable
-# RUN chmod +x cpp/build.sh
+RUN chmod +x server/cpp/build.sh
 
 # # Build the C++ component
-# RUN cd cpp && ./build.sh || echo "C++ build failed, will fallback to JavaScript implementation"
+RUN cd server && cd cpp && ./build.sh || echo "C++ build failed, will fallback to JavaScript implementation"
 
 EXPOSE 5001
 
