@@ -33,7 +33,10 @@ app.use('/api/', apiLimiter);
 app.use(express.json({ limit: '10kb' })); // Body limit is 10kb
 
 // Data sanitization against NoSQL query injection
-app.use(mongoSanitize());
+app.use(mongoSanitize({ onSanitize: ({ req, key }) => {
+  console.warn(`This request[${key}] is sanitized`, req[key]);
+}}));
+
 
 // Data sanitization against XSS
 app.use(xss());
