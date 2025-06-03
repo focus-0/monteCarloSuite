@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
 import { Line } from 'react-chartjs-2';
-
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001';
 // Register ChartJS components
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
@@ -56,7 +56,7 @@ const BlackScholes = () => {
   useEffect(() => {
     const checkImplementation = async () => {
       try {
-        const response = await axios.get('/api/implementation-status');
+        const response = await axios.get(`${API_BASE_URL}/api/implementation-status`);
         setImplementationStatus(response.data);
       } catch (err) {
         console.error('Error checking implementation status:', err);
@@ -77,7 +77,7 @@ const BlackScholes = () => {
   const fetchHistory = async () => {
     setHistoryLoading(true);
     try {
-      const response = await axios.get('/api/history');
+      const response = await axios.get(`${API_BASE_URL}/api/history`);
       setHistory(response.data);
     } catch (err) {
       console.error('Error fetching history:', err);
@@ -172,7 +172,7 @@ const BlackScholes = () => {
     setError(null);
 
     try {
-      const response = await axios.post('/api/black-scholes', formData);
+      const response = await axios.post(`${API_BASE_URL}/api/black-scholes`, formData);
       setResult(response.data);
       
       // Prepare tags as an array
@@ -181,7 +181,7 @@ const BlackScholes = () => {
         : [];
       
       // Save to history
-      await axios.post('/api/history', {
+      await axios.post(`${API_BASE_URL}/api/history`, {
         simulationType: 'black-scholes',
         parameters: formData,
         result: response.data,
@@ -231,7 +231,7 @@ const BlackScholes = () => {
         ? simulationMeta.tags.split(',').map(tag => tag.trim())
         : [];
       
-      await axios.put(`/api/history/${editingSimulation._id}`, {
+      await axios.put(`${API_BASE_URL}/api/history/${editingSimulation._id}`, {
         name: simulationMeta.name,
         description: simulationMeta.description,
         tags: tagsArray

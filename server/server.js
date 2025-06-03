@@ -36,7 +36,7 @@ app.use(express.json({ limit: '10kb' })); // Body limit is 10kb
 // CORS configuration
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? 
-    ['http://localhost:3000', 'https://your-prod-domain.com'] : '*',
+    ['http://localhost:3000', 'https://montecarlosuitefe.onrender.com'] : '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));

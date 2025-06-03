@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Line, Bar } from 'react-chartjs-2';
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001';
 // Register ChartJS components
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
 
@@ -39,7 +40,7 @@ const Benchmark = () => {
     setError(null);
 
     try {
-      const response = await axios.post('/api/benchmark', formData);
+      const response = await axios.post(`${API_BASE_URL}/api/benchmark`, formData);
       setBenchmarkResults(response.data);
     } catch (err) {
       setError('Error running benchmark. Please check your inputs and try again.');
