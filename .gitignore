@@ -5,7 +5,7 @@
 
 # Testing
 /coverage
-
+.env
 # Production
 /build
 /client/build
