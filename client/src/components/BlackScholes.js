@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
 import { Line } from 'react-chartjs-2';
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001';
+const API_BASE_URL ='http://localhost:5001';
+//const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001';
 // Register ChartJS components
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
@@ -29,9 +30,9 @@ const BlackScholes = () => {
   
   // State for implementation status
   const [implementationStatus, setImplementationStatus] = useState({
-    cpp_available: false,
-    default_implementation: 'javascript',
-    analytical_available: false
+    cpp_available: true,
+    default_implementation: 'cpp',
+    analytical_available: true
   });
 
   // State for active tab

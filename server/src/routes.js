@@ -1,7 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const monteCarloService = require('../utils/monte_carlo_service');
-const benchmarkService = require('../utils/benchmark_service');
 const historyRoutes = require('../routes/historyRoutes');
 
 const router = express.Router();
@@ -233,41 +232,6 @@ router.post(
   }
 );
 
-// API endpoint for performance benchmarking
-router.post(
-  '/api/benchmark',
-  monteCarloValidation,
-  handleValidationErrors,
-  sanitizeNumericInputs,
-  async (req, res) => {
-    try {
-      const { S0, K, r, sigma, T, isCall, numTrials } = req.body;
-      
-      // Double-check validation with our custom validator
-      const validation = validateOptionParams({ S0, K, r, sigma, T, numTrials });
-      if (!validation.isValid) {
-        return res.status(400).json({ error: validation.error });
-      }
-      
-      // Inputs already sanitized by middleware
-      const params = {
-        S0,
-        K,
-        r,
-        sigma,
-        T,
-        isCall,
-        numTrials
-      };
-
-      const result = await benchmarkService.runBenchmark(params);
-      res.json(result);
-    } catch (error) {
-      console.error('Error running benchmark:', error);
-      res.status(500).json({ error: 'Failed to run benchmark' });
-    }
-  }
-);
 
 // Endpoint to check which implementation is being used
 router.get('/api/implementation-status', (req, res) => {
