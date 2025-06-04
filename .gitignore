@@ -7,8 +7,8 @@
 /coverage
 .env
 # Production
-/build
-/client/build
+build
+client/build
 
 # Misc
 .DS_Store

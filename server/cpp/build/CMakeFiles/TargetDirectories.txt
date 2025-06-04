@@ -1,7 +1,0 @@
-/Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/build/CMakeFiles/monte_carlo.dir
-/Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/build/CMakeFiles/edit_cache.dir
-/Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/build/CMakeFiles/rebuild_cache.dir
-/Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/build/CMakeFiles/list_install_components.dir
-/Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/build/CMakeFiles/install.dir
-/Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/build/CMakeFiles/install/local.dir
-/Users/ayushlohumi/Desktop/MonteCarloSuite/server/cpp/build/CMakeFiles/install/strip.dir
