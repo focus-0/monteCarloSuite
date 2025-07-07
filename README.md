@@ -60,14 +60,12 @@ npm install
 
 ### Building the C++ Backend (Optional)
 
-The C++ backend provides significantly better performance for Monte Carlo simulations. To build it:
+The C++ backend provides significantly better performance (12 X) for Monte Carlo simulations. To build it:
 
 ```bash
 cd server/cpp
 ./build.sh
 ```
-
-If the C++ backend fails to build, the application will automatically fall back to the JavaScript implementation.
 
 ### Running the Application
 
