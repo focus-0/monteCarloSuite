@@ -10,7 +10,7 @@ A web application for pricing options using Monte Carlo simulation with the Blac
 - Visualize option prices with confidence intervals
 - Adjust all Black-Scholes parameters (stock price, strike price, volatility, etc.)
 - Support for both call and put options
-- **High-performance C++ backend** with JavaScript fallback
+- **High-performance C++ backend** 
 - **Dark Mode** with system preference detection and toggle
 
 ## User Interface
@@ -18,8 +18,7 @@ A web application for pricing options using Monte Carlo simulation with the Blac
 - Clean, modern interface with responsive design
 - Intuitive parameter input forms
 - Interactive charts and visualizations
-- Performance benchmarking tools
-- Dark/Light theme toggle with persistent user preference
+
 
 ## Technologies Used
 
@@ -117,25 +116,11 @@ The application uses Monte Carlo simulation to price European options:
 
 ### Implementation Details
 
-The application has two backend implementations:
-
-1. **C++ Implementation**: 
+ **C++ Implementation**: 
    - Uses multi-threading for parallel computation
    - Significantly faster for large number of trials
    - Automatically used if available
 
-2. **JavaScript Implementation**:
-   - Used as fallback if C++ implementation is not available
-   - Simpler but slower for large simulations
-
-### Dark Mode Implementation
-
-The application features a modern dark mode implementation:
-- True deep black (#000000) background for OLED screens
-- High contrast text for readability
-- Custom Chart.js theme integration for visualizations
-- Persists user preference in local storage
-- Auto-detects system preference on first visit
 
 ## API Documentation
 
@@ -218,7 +203,7 @@ monte-carlo-suite/
 │       ├── App.js           # Main React component
 │       ├── App.css          # Global styles
 │       ├── index.js         # Application entry point
-│       └── ThemeContext.js  # Dark mode context
+│       
 │
 ├── server/                  # Node.js backend
 │   ├── cpp/                 # C++ implementation
@@ -250,68 +235,9 @@ The C++ implementation uses an object-oriented approach with these key classes:
    - Implements Geometric Brownian Motion for stock price paths
    - Supports multiple time steps
 
-### JavaScript Implementation
 
-The JavaScript implementation mirrors the C++ implementation for consistent API, but without threading:
 
-- Uses the Box-Muller transform for generating normal random variables
-- Implements the same mathematical models for consistency
-- Serves as a fallback when the C++ implementation is unavailable
 
-### Adding New Option Models
-
-To add a new option pricing model:
-
-1. Create a new C++ class that inherits from `Simulation`
-2. Implement the required virtual methods
-3. Add corresponding JavaScript implementation
-4. Create a new API endpoint in the Express server
-5. Add a new form component in the React frontend
-
-## Code Documentation Standards
-
-### C++ Code Standards
-
-- Class and method names use `PascalCase`
-- Variables use `camelCase`
-- Constants and macros use `UPPER_CASE`
-- All public methods and classes have descriptive comments
-- Implementation details are documented for complex algorithms
-
-Example:
-
-```cpp
-/**
- * Calculates the option price using Monte Carlo simulation.
- * 
- * @param numTrials Number of Monte Carlo trials to run
- * @param numThreads Number of threads to utilize (0 for auto-detection)
- * @return The estimated option price
- */
-double BlackScholesSimulation::calculateOptionPrice(int numTrials, int numThreads) {
-    // Implementation details
-}
-```
-
-### JavaScript/React Code Standards
-
-- ES6+ syntax
-- React hooks for state management
-- JSDoc comments for functions and components
-
-Example:
-
-```javascript
-/**
- * BlackScholes component for option pricing simulation.
- * Provides a form for parameter input and displays results.
- * 
- * @returns {JSX.Element} The rendered component
- */
-function BlackScholes() {
-    // Component implementation
-}
-```
 
 ## User Guide
 
@@ -335,27 +261,10 @@ function BlackScholes() {
    - **Confidence Interval**: 95% confidence range for the true option price
    - **Price Distribution**: Histogram showing the distribution of simulated prices
 
-### Performance Benchmark
-
-1. **Running a Benchmark**:
-   - Navigate to the Performance Benchmark tab
-   - Enter the same parameters as in the option simulator
-   - Click "Run Benchmark"
-
-2. **Interpreting Benchmark Results**:
-   - **Execution Time Comparison**: Chart comparing JavaScript vs C++ performance
-   - **Thread Scaling**: Chart showing C++ performance across different thread counts
-   - **Speedup Ratio**: How much faster C++ is compared to JavaScript
-   - **Detailed Results Table**: Performance metrics for each configuration
-
-### Using Dark Mode
-
-- Toggle between light and dark mode using the sun/moon icon in the header
-- Your preference will be saved for future visits
-- The application will initially match your system preference
 
 ## Future Enhancements
-
+- Adding Dark Mode
+- Adding C++ V/S JavaScript Performance Benchmark
 - Add support for American options
 - Implement more exotic option types (Asian, Barrier, etc.)
 - Add more visualization features (stock price paths, etc.)
