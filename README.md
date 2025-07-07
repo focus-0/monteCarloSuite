@@ -158,37 +158,7 @@ Prices a European option using the Black-Scholes model and Monte Carlo simulatio
 }
 ```
 
-#### `POST /api/benchmark`
 
-Benchmarks the performance of C++ vs JavaScript implementations.
-
-**Request Body:**
-Same format as `/api/blackscholes`
-
-**Response:**
-```json
-{
-  "javascript": {
-    "runs": [...],            // Array of individual run results
-    "statistics": {
-      "avg": 325.5,           // Average execution time (ms)
-      "min": 315.2,           // Minimum execution time (ms)
-      "max": 335.8            // Maximum execution time (ms)
-    }
-  },
-  "cpp": {
-    "1": {                    // Results for 1 thread
-      "runs": [...],
-      "statistics": {...}
-    },
-    "2": {                    // Results for 2 threads
-      "runs": [...],
-      "statistics": {...}
-    },
-    // ... results for additional thread counts
-  }
-}
-```
 
 ## Developer Guide
 
