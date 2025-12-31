@@ -1,43 +1,39 @@
-# Stage 1: Build C++ components
-# CHANGE: Use alpine here so the binary is compatible with the runtime stage
+# ----------------------------
+# Stage 1: C++ Builder
+# ----------------------------
 FROM node:18-alpine as builder
 
 WORKDIR /app
 
-# CHANGE: Install Alpine specific build tools (apk instead of apt-get)
+# Install Alpine build tools
 RUN apk add --no-cache \
     build-base \
     cmake \
     bash
 
-# Copy source code
+# COPY TRUTH: Since context is './server', we just copy 'cpp' directly
 COPY cpp ./cpp
 
-# Build the C++ component
-# We fail hard (remove || echo) because if the build fails in stage 1, 
-# we want the docker build to stop, not ship a broken container.
-RUN chmod +x cpp/build.sh && \
-    cd cpp && \
-    ./build.sh
+# Build the binary
+WORKDIR /app/cpp
+RUN chmod +x build.sh && ./build.sh
 
-# ---
-
-# Stage 2: Production runtime
+# ----------------------------
+# Stage 2: Node.js Runtime
+# ----------------------------
 FROM node:18-alpine
 
 WORKDIR /app
 
-# Copy package files first (better caching)
+# Install dependencies (Context is './server', so package.json is at root)
 COPY package*.json ./
-
-# Install dependencies
 RUN npm install --no-optional && npm cache clean --force
 
-# Copy the rest of the application source
+# Copy the rest of the server code
 COPY . .
 
-# CRITICAL FIX: Copy the COMPILED binary from the builder stage
-# The build.sh outputs to cpp/monte_carlo
+# CRITICAL FIX: Copy binary from builder to the correct runtime location
+# We place it in ./cpp/monte_carlo so your Node server finds it at "cpp/monte_carlo"
 COPY --from=builder /app/cpp/monte_carlo ./cpp/monte_carlo
 
 EXPOSE 5001
