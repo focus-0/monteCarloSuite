@@ -1,4 +1,7 @@
-const yahooFinance = require('yahoo-finance2').default;
+const { yahooFinance } = require('./yahoo_finance');
+const config = require('../config');
+const { getOptionsChain, pickATMContract } = require('./options_chain');
+const { getATMVolFromChain } = require('./vol_surface');
 
 const FALLBACK_TICKERS = {
   AAPL: { name: 'Apple Inc.', price: 224.30, volatility: 0.2350 },
@@ -9,7 +12,7 @@ const FALLBACK_TICKERS = {
 };
 
 async function getMarketData(ticker) {
-  const symbol = (ticker || 'AAPL').trim().toUpperCase();
+  const symbol = (ticker || config.defaultSymbol).trim().toUpperCase();
 
   try {
     let quote = null;
@@ -31,16 +34,17 @@ async function getMarketData(ticker) {
       startDate.setFullYear(endDate.getFullYear() - 1);
 
       try {
-        history = await yahooFinance.historical(symbol, {
+        const chartResult = await yahooFinance.chart(symbol, {
           period1: startDate,
           period2: endDate,
           interval: '1d'
         });
+        history = chartResult?.quotes || null;
       } catch (hErr) {
         // Ignore history error
       }
 
-      let calculatedVol = 0.25;
+      let calculatedVol = config.intraday.defaultVol;
       if (history && history.length > 30) {
         const logReturns = [];
         for (let i = 1; i < history.length; i++) {
@@ -60,27 +64,10 @@ async function getMarketData(ticker) {
       // Try fetching ATM Implied Volatility from options chain
       let impliedVol = null;
       try {
-        const optionChain = await yahooFinance.options(symbol);
-        if (optionChain && optionChain.options && optionChain.options.length > 0) {
-          const calls = optionChain.options[0].calls || [];
-          if (calls.length > 0) {
-            // Find ATM call option (strike closest to current price)
-            let closestCall = calls[0];
-            let minDiff = Math.abs(closestCall.strike - currentPrice);
-
-            for (const call of calls) {
-              const diff = Math.abs(call.strike - currentPrice);
-              if (diff < minDiff && call.impliedVolatility > 0) {
-                minDiff = diff;
-                closestCall = call;
-              }
-            }
-
-            if (closestCall && closestCall.impliedVolatility > 0) {
-              impliedVol = closestCall.impliedVolatility;
-            }
-          }
-        }
+        const chain = await getOptionsChain(symbol);
+        impliedVol = getATMVolFromChain(chain, currentPrice)
+          ?? pickATMContract(chain, currentPrice, 'call')?.impliedVolatility
+          ?? null;
       } catch (optErr) {
         // Fallback to historical volatility if options chain is unavailable
       }

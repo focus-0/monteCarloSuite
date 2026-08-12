@@ -1,11 +1,10 @@
 const mongoose = require('mongoose');
+const config = require('../config');
 
 const connectDB = async () => {
-  const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/montecarlo';
-
   try {
-    const conn = await mongoose.connect(mongoURI, {
-      dbName: 'montecarlo',
+    const conn = await mongoose.connect(config.mongoUri, {
+      dbName: config.mongoDbName
     });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {

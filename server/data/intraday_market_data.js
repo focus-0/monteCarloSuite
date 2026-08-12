@@ -16,11 +16,14 @@ const NEWS_EVENTS = {
   330: { title: "Institutional Power-Hour Volume Surge", volMultiplier: 1.15, priceShockPct: 0.008 }
 };
 
-function generateIntradaySeries(symbol = 'AAPL') {
+const { getSessionAnchorIso, buildSimulationTickTime } = require('../utils/time_format');
+
+function generateIntradaySeries(symbol = 'AAPL', sessionDateStr = null) {
   const asset = BASE_ASSETS[symbol.toUpperCase()] || BASE_ASSETS.AAPL;
   const series = [];
   let currentPrice = asset.basePrice;
   let currentVol = asset.baseVol;
+  const sessionAnchorIso = getSessionAnchorIso(sessionDateStr);
 
   // Pseudo-random deterministic generator for consistent trading arena benchmarks
   let seed = 42 + symbol.charCodeAt(0);
@@ -52,9 +55,13 @@ function generateIntradaySeries(symbol = 'AAPL') {
     // Minor volatility mean-reversion
     currentVol = currentVol * 0.995 + asset.baseVol * 0.005;
 
+    const { simulationTimeIso, simulationTimeDisplay } = buildSimulationTickTime(minute, sessionAnchorIso);
+
     series.push({
       minute,
       time: formatTradingTime(minute),
+      simulationTimeIso,
+      simulationTimeDisplay,
       price: Number(currentPrice.toFixed(2)),
       volatility: Number(currentVol.toFixed(4)),
       newsEvent
@@ -65,6 +72,8 @@ function generateIntradaySeries(symbol = 'AAPL') {
     symbol: symbol.toUpperCase(),
     name: asset.name,
     basePrice: asset.basePrice,
+    sessionAnchorIso,
+    dataSource: 'simulated_replay',
     series
   };
 }

@@ -6,14 +6,14 @@ Stops immediately if 50 CONSECUTIVE identical Gemma conclusions are reached.
 """
 
 import json
+import os
 import subprocess
 import urllib.request
 import time
 import sys
 from collections import Counter
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL_NAME = "gemma4:e2b-mlx"
+from env_config import OLLAMA_CHAT_URL as OLLAMA_URL, MODEL_NAME
 MCP_SERVER_CMD = ["node", "server/mcp_server.js"]
 
 class FastSimulationBenchmark:

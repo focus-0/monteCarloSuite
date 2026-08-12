@@ -1,7 +1,13 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+const config = require('../config');
 const monteCarloService = require('../utils/monte_carlo_service');
 const mftArena = require('../utils/mft_trading_arena');
+const gemmaAgent = require('../utils/gemma_agent');
+const { validateRecommendationConsistency } = require('../utils/recommendation_validator');
+const { getMarketNews } = require('../utils/market_news');
+const { createSession, getSession } = require('../utils/mft_arena_session');
+const llmProvider = require('../utils/llm_provider');
 const historyRoutes = require('../routes/historyRoutes');
 
 const router = express.Router();
@@ -236,7 +242,14 @@ router.post(
 
 // Endpoint to check which implementation is being used
 router.get('/api/implementation-status', (req, res) => {
-  res.json(monteCarloService.getImplementationStatus());
+  const llmProvider = require('../utils/llm_provider');
+  res.json({
+    ...monteCarloService.getImplementationStatus(),
+    llm_provider: llmProvider.getProviderName(),
+    llm_model: llmProvider.getModelName(),
+    groq_configured: Boolean(config.groq.apiKey),
+    gemini_configured: Boolean(config.gemini.apiKey)
+  });
 });
 
 // Non-blocking C++ simulation endpoint
@@ -290,21 +303,38 @@ router.post('/api/price-paths', sanitizeNumericInputs, async (req, res) => {
   }
 });
 
-// Yahoo Finance live quote and historical volatility endpoint
-router.get('/api/market/:ticker', async (req, res) => {
+async function handleMarketData(req, res) {
   try {
-    const { ticker } = req.params;
+    const ticker = req.params.ticker || req.params.symbol;
     const data = await monteCarloService.getMarketData(ticker);
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message || 'Failed to fetch market data' });
   }
+}
+
+// Yahoo Finance live quote and historical volatility endpoint
+router.get('/api/market/:ticker', handleMarketData);
+router.get('/api/market-data/:symbol', handleMarketData);
+
+router.get('/api/market-news/:symbol', async (req, res) => {
+  try {
+    const count = Math.min(
+      parseInt(req.query.count, 10) || config.marketNews.defaultCount,
+      config.marketNews.maxCount
+    );
+    const data = await getMarketNews(req.params.symbol, count);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to fetch market news' });
+  }
 });
 
-// Local Ollama Gemma AI Agent Risk Audit endpoint (100% Real Live LLM Inference)
+// LLM AI Agent Risk Audit endpoint (Ollama local or Groq cloud via llm_provider.js)
 router.post('/api/agent/analyze', sanitizeNumericInputs, async (req, res) => {
   try {
-    const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000 } = req.body;
+    const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, symbol: rawSymbol } = req.body;
+    const symbol = String(rawSymbol || config.defaultSymbol).trim().toUpperCase() || config.defaultSymbol;
     
     // 1. Calculate live dynamic C++ European price
     const eurResult = await monteCarloService.calculateOptionPrice({ S0, K, r, sigma, T, isCall, numTrials });
@@ -323,7 +353,20 @@ router.post('/api/agent/analyze', sanitizeNumericInputs, async (req, res) => {
     const vegaVal = parseFloat(greeks.vega.toFixed(2));
     const thetaVal = parseFloat(greeks.theta.toFixed(2));
 
+    const newsResult = await getMarketNews(symbol, config.agent.newsDefaultCount);
+    const newsLines = newsResult.articles?.length
+      ? newsResult.articles
+          .map(
+            (a, i) =>
+              `${i + 1}. "${a.title}" — ${a.source} (${a.pubDateFormatted || a.pubDateIso || 'unknown date'})`
+          )
+          .join('\n')
+      : 'No recent headlines available.';
+
+    const wallClockTime = new Date().toISOString();
     const prompt = `You are a Senior Quantitative Risk Analyst. Analyze the C++ Monte Carlo simulation results below and provide a clear, plain-English summary for a trader.
+
+WALL-CLOCK TIME (analysis run): ${wallClockTime}
 
 COMPUTATION RESULTS:
 - Option Style: ${isCall ? 'Call' : 'Put'}
@@ -332,54 +375,49 @@ COMPUTATION RESULTS:
 - Asian Option Fair Value (Path Average): $${asianPrice} (Path Discount: ${discountVal}%)
 - Greeks: Delta (Δ): ${deltaVal}, Vega (ν): ${vegaVal}, Theta (Θ): ${thetaVal}
 
+MARKET NEWS (${symbol}, fetched ${newsResult.fetchedAtDisplay || newsResult.fetchedAt}):
+${newsLines}
+
 INSTRUCTIONS:
 1. Explain in 3 concise bullet points what happens to the trader's money if stock drops or vol crashes.
 2. Compare European vs Asian option price and explain the path-averaging discount.
-3. Give a final BUY, SELL, or HOLD risk recommendation with justification.`;
+3. Note whether any headline above could affect vol or directional risk for this option.
+4. Give a final BUY, SELL, or HOLD risk recommendation with justification.`;
 
     let gemmaText = '';
-    let llmTimeSec = 1.2;
-    let tokensPerSec = 43.8;
-    const modelName = 'gemma4:e2b-mlx';
+    let llmTimeSec = null;
+    let tokensPerSec = null;
+    let executedToolCalls = [];
 
     const tLlmStart = Date.now();
 
     try {
-      // Send HTTP POST directly to local Ollama HTTP API using native fetch
-      const response = await fetch('http://localhost:11434/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [{ role: 'user', content: prompt }],
-          stream: false
-        })
-      });
-
-      const data = await response.json();
+      const agentRes = await gemmaAgent.runGemmaAgent(prompt);
       const elapsedMs = Date.now() - tLlmStart;
       llmTimeSec = parseFloat((elapsedMs / 1000).toFixed(2));
-
-      if (data && data.message) {
-        gemmaText = data.message.content;
-        const evalCount = data.eval_count || 0;
-        const evalDurationNs = data.eval_duration || 1;
-        if (evalCount > 0 && evalDurationNs > 0) {
-          tokensPerSec = parseFloat((evalCount / (evalDurationNs / 1e9)).toFixed(1));
-        }
-      }
-    } catch (ollamaErr) {
-      console.warn('Ollama local LLM connection fallback:', ollamaErr.message);
+      gemmaText = agentRes.gemmaAnalysis || '';
+      executedToolCalls = agentRes.executedToolCalls || [];
+      tokensPerSec = agentRes.tokensPerSec ?? null;
+    } catch (llmErr) {
+      console.warn('LLM agent fallback:', llmErr.message);
       const rec = deltaVal > 0.8 ? 'BUY' : deltaVal < 0.3 ? 'SELL' : 'HOLD';
-      gemmaText = `Gemma AI Agent evaluated ${isCall ? 'Call' : 'Put'} for S0=$${S0}, K=$${K}, σ=${(sigma * 100).toFixed(1)}%. European price is $${eurPrice} vs Asian price $${asianPrice} (${discountVal}% path-averaging discount). With Delta at ${deltaVal} and Vega at ${vegaVal}, we recommend ${rec} to manage portfolio exposure.`;
+      gemmaText = `AI risk agent evaluated ${isCall ? 'Call' : 'Put'} for S0=$${S0}, K=$${K}, σ=${(sigma * 100).toFixed(1)}%. European price is $${eurPrice} vs Asian price $${asianPrice} (${discountVal}% path-averaging discount). With Delta at ${deltaVal} and Vega at ${vegaVal}, we recommend ${rec} to manage portfolio exposure.`;
     }
 
-    const rec = gemmaText.includes('BUY') ? 'BUY' : gemmaText.includes('SELL') ? 'SELL' : 'HOLD';
+    const validation = validateRecommendationConsistency({
+      delta: deltaVal,
+      vega: vegaVal,
+      isCall,
+      gemmaText
+    });
+    const rec = validation.recommendation;
     const recColor = rec === 'BUY' ? 'success' : rec === 'SELL' ? 'danger' : 'warning';
 
     const responsePayload = {
       recommendation: rec,
       recommendationColor: recColor,
+      consistencyCheck: validation.consistencyCheck,
+      validationWarning: !validation.consistencyCheck.passed,
       impactAnalysis: [
         `Stock Price Exposure: Delta (Δ = ${deltaVal}) indicates ~$${deltaVal} option price move per $1 stock move.`,
         `Volatility Risk: Vega (ν = ${vegaVal}) makes option price change by $${(vegaVal * 0.01).toFixed(2)} per 1% vol shift.`,
@@ -390,12 +428,20 @@ INSTRUCTIONS:
         asianPrice: asianPrice,
         discountPct: `${discountVal}%`
       },
+      marketNews: {
+        symbol: newsResult.symbol,
+        dataSource: newsResult.dataSource,
+        fetchedAt: newsResult.fetchedAt,
+        fetchedAtDisplay: newsResult.fetchedAtDisplay,
+        articles: newsResult.articles
+      },
       gemmaText: gemmaText,
+      executedToolCalls,
       benchmarkStats: {
         cppTimeMs: totalCppMs,
         llmTimeSec: llmTimeSec,
-        tokensPerSec: tokensPerSec,
-        modelName: modelName
+        tokensPerSec,
+        modelName: llmProvider.getModelName()
       }
     };
 
@@ -421,16 +467,158 @@ router.post('/api/simulation/delta-hedge', async (req, res) => {
 
 /**
  * @route POST /api/mft/arena/run
- * @desc Run 390-minute MFT Trading Arena simulation with AI strategy
+ * @desc Batch replay for rules-based strategies (delta_hedge, buy_hold)
  */
 router.post('/api/mft/arena/run', async (req, res) => {
   try {
     const params = req.body || {};
-    const result = await mftArena.runTradingArena(params);
+    if (params.strategyMode === 'ai_agent') {
+      return res.status(400).json({
+        error: 'ai_agent strategy requires a live session. Use POST /api/mft/arena/session/start and connect to the SSE stream.'
+      });
+    }
+    const result = await mftArena.runTradingArena({
+      ...params,
+      dataSource: params.dataSource || config.mft.defaultDataSource,
+      sessionDate: params.sessionDate || null,
+      enforceRisk: params.enforceRisk !== false,
+      riskLimits: params.riskLimits || {}
+    });
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message || 'MFT Trading Arena simulation failed' });
   }
+});
+
+/**
+ * @route POST /api/mft/arena/session/start
+ * @desc Create a paced live trading session (required for ai_agent)
+ */
+router.post('/api/mft/arena/session/start', (req, res) => {
+  try {
+    const params = req.body || {};
+    const session = createSession({
+      symbol: params.symbol || config.defaultSymbol,
+      capital: params.capital || config.mft.defaultCapital,
+      strategyMode: params.strategyMode || 'ai_agent',
+      timeWindow: params.timeWindow || config.mft.defaultTimeWindow,
+      tickIntervalMs: params.tickIntervalMs || config.mft.defaultTickIntervalMs,
+      gemmaInterval: params.gemmaInterval || config.mft.defaultGemmaInterval,
+      dataSource: params.dataSource || config.mft.defaultDataSource,
+      sessionDate: params.sessionDate || null,
+      enforceRisk: params.enforceRisk !== false,
+      riskLimits: params.riskLimits || {}
+    });
+    res.json({
+      sessionId: session.id,
+      streamUrl: `/api/mft/arena/session/${session.id}/stream`,
+      ...session.getPublicState()
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to create arena session' });
+  }
+});
+
+router.get('/api/options-chain/:symbol', async (req, res) => {
+  try {
+    const { getOptionsChain } = require('../utils/options_chain');
+    const { buildVolSurfaceFromChain, getATMVol } = require('../utils/vol_surface');
+    const chain = await getOptionsChain(req.params.symbol);
+    const surface = buildVolSurfaceFromChain(chain, chain.spot);
+    res.json({
+      ...chain,
+      atmIv: getATMVol(surface),
+      surfacePoints: surface.points.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to fetch options chain' });
+  }
+});
+
+/**
+ * @route GET /api/mft/arena/session/:id/stream
+ * @desc SSE stream of live tick updates, LLM decisions, and session events
+ */
+router.get('/api/mft/arena/session/:id/stream', async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  await session.ensureInitialized();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  session.subscribe(res);
+
+  const snapshot = {
+    type: 'snapshot',
+    session: session.getPublicState(),
+    navCurve: session.state.navCurve,
+    tradeLog: session.state.tradeLog,
+    gemmaDecisions: session.state.gemmaDecisions,
+    liveNews: session.state.liveNews
+  };
+  res.write(`event: snapshot\n`);
+  res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+
+  if (session.status === 'created') {
+    session.start().catch((err) => {
+      session.broadcast('error', { error: err.message });
+    });
+  }
+});
+
+/**
+ * @route GET /api/mft/arena/session/:id/status
+ */
+router.get('/api/mft/arena/session/:id/status', async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  await session.ensureInitialized();
+  res.json({
+    ...session.getPublicState(),
+    navCurve: session.state.navCurve,
+    tradeLog: session.state.tradeLog,
+    gemmaDecisions: session.state.gemmaDecisions,
+    liveNews: session.state.liveNews
+  });
+});
+
+/**
+ * @route POST /api/mft/arena/session/:id/pause
+ */
+router.post('/api/mft/arena/session/:id/pause', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  session.pause();
+  res.json(session.getPublicState());
+});
+
+/**
+ * @route POST /api/mft/arena/session/:id/resume
+ */
+router.post('/api/mft/arena/session/:id/resume', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  session.resume();
+  res.json(session.getPublicState());
+});
+
+/**
+ * @route POST /api/mft/arena/session/:id/stop
+ */
+router.post('/api/mft/arena/session/:id/stop', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  session.stop();
+  res.json(session.getPublicState());
 });
 
 // History routes

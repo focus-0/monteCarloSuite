@@ -1,473 +1,887 @@
-# MonteCarloSuite — Multi-Threaded C++ Quantitative Engine & MFT AI Risk Backend
+# MonteCarloSuite — Multi-Threaded C++ Quantitative Engine & Gemma Risk Backend
 
-**MonteCarloSuite** is a high-performance quantitative finance suite designed for sub-millisecond option pricing, risk sensitivity computation ($\Delta, \Gamma, \nu, \Theta, \rho$), discrete delta-hedging simulation, and real-time Medium-Frequency Trading (MFT) risk orchestration.
+**MonteCarloSuite** is a high-performance quantitative finance backend built around a native **multi-threaded C++17 Monte Carlo engine** for sub-millisecond option pricing, risk sensitivity computation ($\Delta, \Gamma, \nu, \Theta, \rho$), and discrete delta-hedging simulation. An **AI risk agent** (local Ollama or Groq cloud) provides AI-driven risk audits over C++ pricing output, with optional tool calls into live market news and Greeks recalculation.
 
-The architecture combines a native **multi-threaded C++17 Monte Carlo engine** (capable of evaluating $100,000$ simulation paths in **$1.4\text{ ms}$** and $25.2\text{M}$ path-dependent steps in **$125\text{ ms}$**) with an **Express REST API**, a **JSON-RPC Model Context Protocol (MCP) server** for AI agent tool calling, a **Live Financial News RAG pipeline**, and an **MFT Market Replay & AI Agent Trading Arena**.
+The stack also includes an **Express REST API**, a **JSON-RPC Model Context Protocol (MCP) server**, a **Live Financial News pipeline**, and Yahoo Finance market data integration.
 
----
-
-## 📐 1. System Architecture & Component Mapping
-
-```
-                               ┌───────────────────────────────────────────────────────────┐
-                               │             Model Context Protocol (MCP) Server           │
-                               │                   server/mcp_server.js                    │
-                               │                (JSON-RPC 2.0 over stdio)                  │
-                               └─────────────────────────────┬─────────────────────────────┘
-                                                             │
-                                                             ▼
-┌──────────────────────────┐   HTTP REST API   ┌───────────────────────────────────────────┐
-│     Client Dashboard     │ ────────────────> │             Node.js Express Server        │
-│   (React 18 + Chart.js)  │                   │         server/server.js (Port 5001)      │
-└──────────────────────────┘                   └──────┬─────────────────────────────┬──────┘
-                                                      │                             │
-                                  Child Process Exec  │                             │ Live Web RAG / Market Data
-                                  stdout (JSON)       ▼                             ▼
-                              ┌──────────────────────────────┐        ┌─────────────────────────────┐
-                              │    Multi-Threaded C++ Core   │        │     Yahoo Finance Options   │
-                              │    server/cpp/monte_carlo    │        │     & Google News RSS RAG   │
-                              │   (Mode 0, 1, 2, 3, 4, 5)    │        │  (market_data / news.js)    │
-                              └──────────────────────────────┘        └─────────────────────────────┘
-```
+> **Product focus:** The primary AI workflow is `POST /api/agent/analyze` — C++ pricing + local Gemma risk summary. An optional **MFT Trading Arena** backend (paced SSE sessions with Gemma in the trading loop) is documented separately in [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md).
 
 ---
 
-## ⚡ 2. C++ Quantitative Core Specification (`server/cpp/src/monte_carlo.cpp`)
+## 1. System Architecture
 
-The core numerical calculations are implemented in C++17, compiled with maximum optimization flags (`-O3 -march=native -pthread`). The binary is stateless and communicates with the Node.js backend via CLI arguments and `stdout` JSON strings.
+```mermaid
+flowchart TB
+  subgraph clients [Clients]
+    HTTP[HTTP / SSE clients]
+    MCPClient[MCP hosts — Claude Desktop, Python agents]
+    Ollama[Ollama gemma4:12b]
+  end
 
-### 2.1 Compilation & Build System
-* **Build File:** `server/cpp/CMakeLists.txt` / `server/cpp/build.sh`
-* **Compiler Flags:** `g++ -O3 -march=native -pthread -std=c++17`
-* **Output Binary:** `server/cpp/monte_carlo`
+  subgraph server [Node.js Express — port 5001]
+    Routes[routes.js]
+    Gemma[gemma_agent.js]
+    Arena["MFT Arena — see docs/MFT_TRADING_ARENA.md"]
+    News[market_news.js]
+    Market[market_data.js]
+    TimeFmt[time_format.js]
+    MCService[monte_carlo_service.js]
+  end
 
-### 2.2 CLI Signature & Argument Mapping
+  subgraph native [C++ Engine]
+    Binary[server/cpp/monte_carlo]
+  end
+
+  subgraph external [External Data]
+    Yahoo[Yahoo Finance]
+    GNews[Google News RSS]
+    Mongo[(MongoDB — optional)]
+  end
+
+  MCPClient -->|stdio JSON-RPC| MCPServer[mcp_server.js]
+  MCPServer --> MCService
+  HTTP --> Routes
+  Routes --> MCService
+  Routes --> Gemma
+  Routes --> Arena
+  Gemma --> Ollama
+  Gemma --> News
+  Gemma --> MCService
+  Arena --> MCService
+  MCService --> Binary
+  Market --> Yahoo
+  News --> GNews
+  News --> TimeFmt
+  Routes --> Mongo
+```
+
+| Component | Path | Role |
+| :--- | :--- | :--- |
+| C++ Monte Carlo engine | `server/cpp/` | Pricing, Greeks, Asian options, delta hedge, price paths |
+| Express REST API | `server/server.js`, `server/src/routes.js` | HTTP endpoints |
+| MCP server | `server/mcp_server.js` | Standalone stdio JSON-RPC tool host |
+| Gemma agent | `server/utils/gemma_agent.js` | Ollama `gemma4:12b` with tool calling |
+| MFT arena | `docs/MFT_TRADING_ARENA.md` | Optional intraday replay + paced SSE sessions |
+| Market data | `server/utils/market_data.js` | Yahoo Finance spot + IV |
+| Options chain | `server/utils/options_chain.js` | Yahoo options chain, ATM picker |
+| Vol surface | `server/utils/vol_surface.js` | IV surface from chain |
+| Intraday data | `server/utils/intraday_provider.js` | Yahoo/Polygon/synthetic 1m bars |
+| Risk limits | `server/utils/risk_limits.js` | Hard pre-trade risk gate |
+| Market news | `server/utils/market_news.js` | Google News RSS headlines |
+| Timestamps | `server/utils/time_format.js` | ISO 8601 UTC + display formatting |
+| Python agents | `examples/agent/` | Optional offline Ollama + MCP scripts |
+| React UI | `client/src/components/` | CRA dashboard — see **§10** |
+
+---
+
+## 2. C++ Quantitative Core (`server/cpp/src/monte_carlo.cpp`)
+
+The core numerical calculations are implemented in C++17, compiled with `-O3 -march=native -pthread`. The binary is stateless and communicates via CLI arguments and `stdout` JSON.
+
+### 2.1 Build
+
+```bash
+cd server/cpp && ./build.sh
+# or: mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
+```
+
+Output binary: `server/cpp/monte_carlo`
+
+### 2.2 CLI Signature
+
 ```bash
 ./monte_carlo <S0> <K> <r> <sigma> <T> <isCall> <numTrials> <benchmark_mode> [threads] [numSteps/iterations] [rebalanceFreq] [txCostPct]
 ```
 
-| Positional Arg | Type | Range | Description |
-| :--- | :--- | :--- | :--- |
-| `argv[1]` (`S0`) | `double` | $> 0.0$ | Initial spot price of the underlying asset |
-| `argv[2]` (`K`) | `double` | $> 0.0$ | Option strike price |
-| `argv[3]` (`r`) | `double` | Any | Annualized risk-free interest rate (e.g. `0.05` for 5%) |
-| `argv[4]` (`sigma`) | `double` | $> 0.0$ | Annualized volatility $\sigma$ (e.g. `0.20` for 20%) |
-| `argv[5]` (`T`) | `double` | $> 0.0$ | Time to maturity in years (e.g. `1.0` for 1 year) |
-| `argv[6]` (`isCall`) | `int` | `0` or `1` | `1` = Call Option, `0` = Put Option |
-| `argv[7]` (`numTrials`) | `int` | $> 0$ | Total number of Monte Carlo paths to simulate |
-| `argv[8]` (`benchmark_mode`) | `int` | `0` to `5` | Engine execution mode selector |
-| `argv[9]` (`threads`) | `int` | $\ge 0$ | Thread count (`0` = auto-detect hardware concurrency) |
-| `argv[10]` (`numSteps`/`iterations`)| `int` | $> 0$ | Step count for Asian/Hedge modes, or benchmark iterations |
-| `argv[11]` (`rebalanceFreq`) | `int` | $\ge 1$ | Rebalancing interval in steps (Mode 5 only, default `1`) |
-| `argv[12]` (`txCostPct`) | `double` | $\ge 0.0$ | Transaction cost percentage (Mode 5 only, default `0.001` = 10 bps) |
-
----
-
-### 2.3 Execution Modes & Output JSON Contracts
-
-#### Mode 0: European Option Single Run (`benchmark_mode = 0`)
-Simulates terminal spot price $S_T = S_0 \exp\left((r - \frac{1}{2}\sigma^2)T + \sigma \sqrt{T} Z\right)$ for $N$ trials.
-* **Output JSON:**
-```json
-{
-  "optionType": "european",
-  "executionTimeMs": 1.420,
-  "optionPrice": 10.450123,
-  "confidence": { "lower": 10.410000, "upper": 10.490000 },
-  "threadsUsed": 8
-}
-```
-
-#### Mode 1: Performance Benchmark (`benchmark_mode = 1`)
-Executes `iterations` benchmark runs of multi-threaded European pricing to compute min, max, mean, and median latency.
-* **Output JSON:**
-```json
-{
-  "statistics": { "min": 1.200, "max": 2.500, "avg": 1.450, "median": 1.410 },
-  "iterations": 5,
-  "threadsUsed": 8,
-  "runs": [ { "iteration": 1, "executionTime": 1.410, "optionPrice": 10.450123, "confidence": { "lower": 10.41, "upper": 10.49 } } ]
-}
-```
-
-#### Mode 2: Arithmetic Asian Option (`benchmark_mode = 2`)
-Path-dependent pricing simulating `numSteps` discrete sub-intervals ($\Delta t = T / \text{numSteps}$). Calculates payoff on arithmetic average spot price: $\bar{S} = \frac{1}{\text{numSteps} + 1} \sum_{k=0}^{\text{numSteps}} S_{t_k}$.
-* **Output JSON:**
-```json
-{
-  "optionType": "asian",
-  "executionTimeMs": 125.430,
-  "numSteps": 252,
-  "optionPrice": 5.678901,
-  "confidence": { "lower": 5.650000, "upper": 5.700000 },
-  "threadsUsed": 8
-}
-```
-
-#### Mode 3: Finite-Difference Greeks with Common Random Numbers (`benchmark_mode = 3`)
-Computes Delta, Gamma, Vega, Theta, and Rho using Common Random Numbers (CRN) to eliminate sampling noise across bumped paths.
-* **Output JSON:**
-```json
-{
-  "executionTimeMs": 1.520,
-  "optionPrice": 10.450123,
-  "greeks": {
-    "delta": 0.635123,
-    "gamma": 0.018456,
-    "vega": 38.123456,
-    "theta": -6.789123,
-    "rho": 25.456789
-  },
-  "threadsUsed": 8
-}
-```
-
-#### Mode 4: Price Paths Generator (`benchmark_mode = 4`)
-Generates 2D trajectory matrix for visualizer plots using fixed deterministic RNG seed `12345`.
-* **Output JSON:**
-```json
-{
-  "executionTimeMs": 2.345,
-  "numPaths": 50,
-  "numSteps": 100,
-  "paths": [ [100.00, 100.23, 100.45, ...], [100.00, 99.87, 99.54, ...] ]
-}
-```
-
-#### Mode 5: Discrete Delta-Hedging Simulator (`benchmark_mode = 5`)
-Simulates 10,000 paths over 252 steps under discrete rebalancing and proportional transaction costs ($10\text{ bps}$).
-* **Output JSON:**
-```json
-{
-  "executionTimeMs": 132.540,
-  "numPaths": 10000,
-  "numSteps": 252,
-  "rebalanceFreq": 1,
-  "transactionCostPct": 0.001,
-  "summaryStatistics": {
-    "meanPnL": -0.6321,
-    "stdDevPnL": 0.4812,
-    "minPnL": -2.8450,
-    "maxPnL": 1.1240,
-    "var95": -1.4820,
-    "cvar95": -1.8740,
-    "avgTxCosts": 0.5520
-  },
-  "pnlDistribution": [ -2.8450, -2.8120, ..., 1.1240 ],
-  "samplePaths": [
-    [
-      { "t": 0.0, "stock": 100.00, "delta": 0.6351, "shares": 0.6351, "cash": -53.15, "hedgeError": 0.0 },
-      { "t": 0.00396, "stock": 100.45, "delta": 0.6420, "shares": 0.6420, "cash": -53.86, "hedgeError": -0.02 }
-    ]
-  ]
-}
-```
-
----
-
-### 2.4 Mathematical Formulations
-
-#### 1. Black-Scholes Analytical Pricing (`bs_price` & `bs_delta`)
-$$d_1 = \frac{\ln(S / K) + \left(r + \frac{1}{2}\sigma^2\right)\tau}{\sigma \sqrt{\tau}}, \quad d_2 = d_1 - \sigma \sqrt{\tau}$$
-
-$$\text{Price}_{\text{Call}} = S \cdot N(d_1) - K e^{-r\tau} N(d_2), \quad \text{Price}_{\text{Put}} = K e^{-r\tau} N(-d_2) - S \cdot N(-d_1)$$
-
-$$\Delta_{\text{Call}} = N(d_1), \quad \Delta_{\text{Put}} = N(d_1) - 1.0$$
-
-Where $N(x) = \frac{1}{2} \text{erfc}\left(-\frac{x}{\sqrt{2}}\right)$.
-
-#### 2. Common Random Numbers (CRN) Finite-Difference Schemes
-To evaluate derivative sensitivities without finite-difference sampling noise, a single random normal draw $Z_i \sim \mathcal{N}(0,1)$ per path $i$ is reused across all bumped parameter evaluations:
-
-* **Spot Bumps:** $h_S = 0.005 \times S_0$
-* **Vol Bump:** $h_\sigma = 0.005$
-* **Time Bump:** $h_T = \frac{1}{365}$
-* **Rate Bump:** $h_r = 0.0005$
-
-$$\Delta = \frac{P(S_0 + h_S) - P(S_0 - h_S)}{2 h_S}$$
-
-$$\Gamma = \frac{P(S_0 + h_S) - 2 P(S_0) + P(S_0 - h_S)}{h_S^2}$$
-
-$$\nu = \frac{P(\sigma + h_\sigma) - P(\sigma - h_\sigma)}{2 h_\sigma}, \quad \Theta = \frac{P(T - h_T) - P(T)}{h_T}, \quad \rho = \frac{P(r + h_r) - P(r - h_r)}{2 h_r}$$
-
-#### 3. Discrete Delta-Hedging Accounting Equations
-For each path $i$ and step $k = 0 \dots \text{numSteps}$:
-1. **Initial Option Sale & Hedge ($k = 0$):**
-   $$V_0 = \text{bs\_price}(S_0), \quad \Delta_0 = \text{bs\_delta}(S_0)$$
-   $$C_0 = V_0 - \Delta_0 S_0 - |\Delta_0| S_0 \cdot \text{txCostPct}$$
-
-2. **Step Accrual & Rebalancing ($k = 1 \dots \text{numSteps}-1$):**
-   $$C_k = C_{k-1} e^{r \Delta t}$$
-   $$\Delta_k = \text{bs\_delta}(S_k, \tau_k)$$
-   $$\delta_{\text{shares}} = \Delta_k - \text{shares}_{k-1}$$
-   $$C_k \leftarrow C_k - \left(\delta_{\text{shares}} S_k + |\delta_{\text{shares}}| S_k \cdot \text{txCostPct}\right)$$
-
-3. **Terminal Liquidation ($k = \text{numSteps}$):**
-   $$\text{Payoff} = \max(S_T - K, 0) \quad (\text{for Call})$$
-   $$\text{PnL}_i = C_T + \text{shares}_T S_T - |\text{shares}_T| S_T \cdot \text{txCostPct} - \text{Payoff}$$
-
-4. **Risk Metrics:**
-   * **95% VaR:** $5^{\text{th}}$ percentile of sorted $\text{PnL}$ vector: $\text{VaR}_{95\%} = \text{PnL}_{(0.05 \cdot N)}$.
-   * **95% CVaR:** Expected loss below 95% VaR threshold: $\text{CVaR}_{95\%} = \frac{1}{0.05 N} \sum_{j=1}^{0.05 N} \text{PnL}_{(j)}$.
-
----
-
-### 2.5 Multi-Threading & Memory Architecture
-* **Threading Model:** `std::thread` worker pool partitioned by trial count $N / \text{num\_threads}$.
-* **PRNG:** Thread-local 64-bit Mersenne Twister (`std::mt19937_64`) seeded via `std::chrono::high_resolution_clock` + thread index offset.
-* **SIMD & Memory Alignment:** Payoff vectors aligned to 64-byte boundaries (`ALIGN_DATA(64)`). Standard normal random draws generated in fixed stack-allocated batches (`RANDOM_BATCH_SIZE = 4096`).
-* **Branchless Payoffs:** `calculate_payoff` implemented without conditional jumps: `std::max(0.0, isCall ? ST - K : K - ST)`.
-
----
-
-## 🟢 3. Node.js Express Backend Architecture (`server/`)
-
-### 3.1 Application Bootstrap & Security Stack (`server/server.js`)
-* **Framework:** Express.js running on Port `5001` (configurable via `process.env.PORT`).
-* **Security & Middleware Stack:**
-  * `helmet()`: HTTP security headers.
-  * `cors()`: Cross-Origin Resource Sharing.
-  * `express-mongo-sanitize()`: Prevents MongoDB operator injection attacks.
-  * `xss-clean()`: Sanitizes user input against cross-site scripting.
-  * `express-rate-limit`: Rate limiting on `/api/` endpoints (100 requests per 15-min window).
-  * `express.json({ limit: '10kb' })`: Body parser.
-
----
-
-### 3.2 Complete REST API Contract Specification (`server/src/routes.js`)
-
-#### 1. `POST /api/black-scholes/cpp`
-Executes multi-threaded C++ European option pricing.
-* **Request Body:**
-  ```json
-  { "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 100000 }
-  ```
-* **Response Body (200 OK):**
-  ```json
-  {
-    "optionPrice": 10.450123,
-    "executionTimeMs": 1.42,
-    "confidence": { "lower": 10.41, "upper": 10.49 },
-    "analyticalPrice": 10.450584,
-    "errorPercentage": 0.0044,
-    "threadsUsed": 8
-  }
-  ```
-
-#### 2. `POST /api/greeks`
-Computes option risk sensitivities via C++ CRN engine.
-* **Request Body:** Same as European option payload.
-* **Response Body (200 OK):**
-  ```json
-  {
-    "executionTimeMs": 1.52,
-    "optionPrice": 10.450123,
-    "greeks": { "delta": 0.635123, "gamma": 0.018456, "vega": 38.123456, "theta": -6.789123, "rho": 25.456789 },
-    "threadsUsed": 8
-  }
-  ```
-
-#### 3. `POST /api/asian-option`
-Prices path-dependent arithmetic Asian options.
-* **Request Body:** Includes optional `"numSteps": 252`.
-* **Response Body (200 OK):**
-  ```json
-  { "optionType": "asian", "executionTimeMs": 125.43, "numSteps": 252, "optionPrice": 5.678901, "confidence": { "lower": 5.65, "upper": 5.70 }, "threadsUsed": 8 }
-  ```
-
-#### 4. `POST /api/benchmark`
-Executes side-by-side performance benchmark comparing C++ against Node.js V8 execution.
-* **Response Body (200 OK):**
-  ```json
-  {
-    "cpp": { "executionTimeMs": 1.42, "optionPrice": 10.450123 },
-    "js": { "executionTimeMs": 24.15, "optionPrice": 10.449812 },
-    "speedupMultiplier": 17.01
-  }
-  ```
-
-#### 5. `POST /api/simulation/delta-hedge`
-Runs 10,000-path discrete delta-hedging simulation.
-* **Request Body:**
-  ```json
-  { "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 10000, "numSteps": 252, "rebalanceFreq": 1, "txCostPct": 0.001 }
-  ```
-* **Response Body (200 OK):** Mode 5 JSON contract (see Section 2.3).
-
-#### 6. `POST /api/mft/arena/run`
-Simulates a 30-minute Power Hour or 390-minute full trading session with autonomous AI trading orders and live web news RAG.
-* **Request Body:**
-  ```json
-  { "symbol": "AAPL", "capital": 100000, "strategyMode": "ai_agent", "timeWindow": 30 }
-  ```
-* **Response Body (200 OK):**
-  ```json
-  {
-    "symbol": "AAPL",
-    "name": "Apple Inc.",
-    "capital": 100000,
-    "strategyMode": "ai_agent",
-    "executionTimeMs": 98,
-    "summary": {
-      "initialCapital": 100000,
-      "finalNav": 234097.90,
-      "netProfit": 134097.90,
-      "roiPct": 134.10,
-      "sharpeRatio": 0.99,
-      "maxDrawdownPct": 10.01,
-      "totalTxCosts": 458.90,
-      "totalTrades": 12
-    },
-    "liveNews": [
-      { "title": "Jefferies Downgrades Apple...", "source": "Barchart.com", "pubDateFormatted": "Wed, Aug 12, 2026", "ageMinutes": 869 }
-    ],
-    "navCurve": [ { "minute": 1, "time": "9:31 AM", "price": 224.30, "nav": 100000.00 }, ... ],
-    "tradeLog": [
-      { "minute": 1, "time": "9:31 AM", "action": "OPEN_POSITION", "detail": "Bought 10 Call Contracts...", "stockPrice": 224.30, "delta": 0.6304, "txFee": 45.20, "reason": "Initial position entry." }
-    ]
-  }
-  ```
-
-#### 7. `GET /api/market-data/:symbol`
-Fetches spot price, ATM implied volatility from live options chain, and 252-day trailing historical volatility.
-* **Response Body (200 OK):**
-  ```json
-  {
-    "symbol": "AAPL",
-    "name": "Apple Inc.",
-    "price": 224.30,
-    "impliedVolatility": 0.2350,
-    "historicalVolatility": 0.2180,
-    "volatilitySource": "option_chain_atm",
-    "isFallback": false
-  }
-  ```
-
-#### 8. `GET /api/market-news/:symbol`
-Fetches live breaking market headlines via Google News RSS parser with publication timestamps.
-* **Response Body (200 OK):**
-  ```json
-  {
-    "symbol": "AAPL",
-    "fetchedAt": "2026-08-12T09:54:24.515Z",
-    "articleCount": 5,
-    "articles": [
-      {
-        "title": "After Earnings, Is Apple Stock a Buy, a Sell, or Fairly Valued?",
-        "source": "Morningstar",
-        "pubDate": "Mon, 10 Aug 2026 09:14:40 GMT",
-        "pubDateFormatted": "Mon, Aug 10, 2026, 02:44 PM GMT+5:30",
-        "link": "https://news.google.com/rss/...",
-        "ageMinutes": 2920
-      }
-    ]
-  }
-  ```
-
----
-
-### 3.3 Backend Utility & Service Modules (`server/utils/`)
-
-#### 1. `monte_carlo_cpp.js` (C++ Process Spawner)
-Wraps child process invocation using Node `child_process.execFile`:
-```javascript
-const binaryPath = path.join(__dirname, '../cpp/monte_carlo');
-execFile(binaryPath, args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => { ... });
-```
-Maps JavaScript parameters to positional array: `[S0, K, r, sigma, T, isCall ? 1 : 0, numTrials, mode, threads, numSteps, rebalanceFreq, txCostPct]`.
-
-#### 2. `market_data.js` (Options Chain Volatility Lookup)
-Uses `yahoo-finance2` to query option expiration dates for ticker `symbol`. Selects the nearest expiration date, fetches the call option chain, locates the contract whose strike price is closest to current spot price $S_0$ (At-The-Money), and extracts its `impliedVolatility`. Falls back to trailing 252-day historical volatility if option chain is unavailable.
-
-#### 3. `market_news.js` (Google News RSS Parser)
-Queries `https://news.google.com/rss/search?q=${symbol}+stock`. Parses `<item>` RSS elements via regular expressions to extract `title`, `source`, `pubDate`, `link`, and calculates `ageMinutes = Math.round((Date.now() - pubDate.getTime()) / 60000)`. Zero API keys required.
-
-#### 4. `mft_trading_arena.js` (Trading Day Replay Engine)
-Simulates a 30-minute or 390-minute trading session on intraday tick data (`server/data/intraday_market_data.js`). Evaluates option prices and CRN Greeks via C++ engine on every tick/news shock, executes trade orders with 10 bps transaction costs, tracks portfolio cash balance, calculates minute-by-minute NAV, and evaluates risk-adjusted metrics (ROI %, Sharpe ratio, Max Drawdown %).
-
----
-
-## 🤖 4. Model Context Protocol (MCP) Server (`server/mcp_server.js`)
-
-The backend exposes an **MCP Server** implementing the JSON-RPC 2.0 protocol over `stdio` to allow autonomous AI Agents (e.g. Anthropic Claude Desktop, Antigravity, Ollama agents) to directly invoke quantitative tools.
-
-### 4.1 MCP Tool Registry Specification
-
-| Tool Name | Input Schema Required Fields | Backend Handler |
+| Arg | Type | Description |
 | :--- | :--- | :--- |
-| `price_european_option` | `S0, K, r, sigma, T, isCall, numTrials` | `monte_carlo_service.calculateOptionPrice` |
-| `price_asian_option` | `S0, K, r, sigma, T, isCall, numTrials` | `monte_carlo_service.calculateAsianOptionPrice` |
-| `calculate_greeks` | `S0, K, r, sigma, T, isCall, numTrials` | `monte_carlo_service.calculateGreeks` |
-| `simulate_delta_hedging` | `S0, K, r, sigma, T, isCall` | `monte_carlo_service.simulateDeltaHedging` |
-| `run_benchmark` | `S0, K, r, sigma, T, isCall, numTrials` | Evaluates C++ vs JS latency |
+| `S0`, `K` | `double` | Spot and strike ($> 0$) |
+| `r`, `sigma`, `T` | `double` | Rate, volatility, time to maturity |
+| `isCall` | `int` | `1` = Call, `0` = Put |
+| `numTrials` | `int` | Monte Carlo path count |
+| `benchmark_mode` | `int` | `0`–`5` (see below) |
+| `threads` | `int` | Worker threads (`0` = auto) |
+| `numSteps` | `int` | Steps for Asian/hedge modes |
+| `rebalanceFreq` | `int` | Rebalance interval (Mode 5) |
+| `txCostPct` | `double` | Transaction cost fraction (Mode 5) |
 
-### 4.2 Stdio JSON-RPC Protocol Sample
+### 2.3 Execution Modes
+
+| Mode | Name | Output |
+| :---: | :--- | :--- |
+| `0` | European option | `optionPrice`, `confidence`, `executionTimeMs` |
+| `1` | Performance benchmark | `statistics`, `runs[]` |
+| `2` | Arithmetic Asian option | `optionType: "asian"`, `numSteps`, `optionPrice` |
+| `3` | CRN finite-difference Greeks | `greeks: { delta, gamma, vega, theta, rho }` |
+| `4` | Price paths generator | `paths[][]` (deterministic seed `12345`) |
+| `5` | Discrete delta-hedging simulator | `summaryStatistics`, `pnlDistribution`, `samplePaths` |
+
+Example — Mode 3 Greeks:
+
+```bash
+./monte_carlo 100 100 0.05 0.20 1.0 1 100000 3 0
+```
+
 ```json
-// Request from AI Agent (stdin):
-{ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "calculate_greeks", "arguments": { "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 100000 } } }
+{
+  "executionTimeMs": 1.52,
+  "optionPrice": 10.450123,
+  "greeks": { "delta": 0.635, "gamma": 0.018, "vega": 38.12, "theta": -6.79, "rho": 25.46 },
+  "threadsUsed": 8
+}
+```
 
-// Response from MCP Server (stdout):
-{ "jsonrpc": "2.0", "id": 1, "result": { "content": [ { "type": "text", "text": "{\n  \"executionTimeMs\": 1.52,\n  \"greeks\": {\n    \"delta\": 0.635123,\n    \"gamma\": 0.018456,\n    \"vega\": 38.123456,\n    \"theta\": -6.789123,\n    \"rho\": 25.456789\n  }\n}" } ] } }
+### 2.4 Key Formulations
+
+**Black-Scholes:** standard $d_1$, $d_2$ with $\text{erfc}$-based $N(x)$.
+
+**CRN Greeks:** single normal draw $Z_i$ per path reused across bumped evaluations; central differences on $S$, $\sigma$, $T$, $r$.
+
+**Delta hedge (Mode 5):** discrete rebalancing with cash accrual $C_k = C_{k-1} e^{r\Delta t}$, proportional transaction costs, terminal liquidation P&L; reports mean/std P&L, 95% VaR/CVaR.
+
+---
+
+## 3. Express REST API (`server/src/routes.js`)
+
+Base URL: `http://localhost:5001` (override with `PORT`).
+
+### 3.1 Health & Status
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/health` | Server liveness |
+| `GET` | `/api/implementation-status` | C++ vs JS engine availability |
+
+### 3.2 Option Pricing & Simulation
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/black-scholes` | European MC (auto-selects C++ or JS) |
+| `POST` | `/api/black-scholes/cpp` | European MC via C++ |
+| `POST` | `/api/black-scholes/js` | European MC via JavaScript |
+| `POST` | `/api/analytical-black-scholes` | Closed-form Black-Scholes |
+| `POST` | `/api/validate-model` | MC price vs analytical |
+| `POST` | `/api/asian-option` | Arithmetic Asian option |
+| `POST` | `/api/greeks` | CRN Greeks |
+| `POST` | `/api/price-paths` | GBM trajectory matrix (Mode 4) |
+| `POST` | `/api/simulation/delta-hedge` | Delta-hedging simulator (Mode 5) |
+
+**Common request body** (pricing endpoints):
+
+```json
+{ "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 100000 }
+```
+
+Asian and delta-hedge accept optional `numSteps`, `rebalanceFreq`, `txCostPct`.
+
+> **Benchmark note:** There is no `POST /api/benchmark` REST route. C++ vs JS latency comparison is available via the MCP `run_benchmark` tool, or by calling `/api/black-scholes/cpp` and `/api/black-scholes/js` separately.
+
+### 3.3 Market Data & News
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/market/:ticker` | Spot, ATM implied vol, 252-day historical vol |
+| `GET` | `/api/market-data/:symbol` | Alias of above |
+| `GET` | `/api/market-news/:symbol?count=5` | Google News RSS headlines (max 20) |
+| `GET` | `/api/options-chain/:symbol` | Nearest-expiry options chain + ATM IV |
+
+News articles include `pubDateIso`, `pubDateFormatted`, `ageMinutes`, and wall-clock `fetchedAt` (ISO 8601 UTC). Normalization is handled by `time_format.js`.
+
+The options chain endpoint returns nearest-expiry calls and puts with implied vol, used by market data and arena session initialization.
+
+### 3.4 Gemma Risk Audit
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/agent/analyze` | C++ pricing + Greeks, then LLM risk summary (Ollama or Groq) |
+
+Computes European, Asian, and Greeks in C++, **fetches live Google News RSS headlines** for the request `symbol` (default `AAPL`), builds a structured prompt including those headlines, and invokes `runGemmaAgent` (`gemma4:12b`). Gemma may still autonomously call `get_market_news` and `calculate_greeks` tools before responding. The **exact messages, tool schemas, and multi-turn expansion** sent to the LLM are documented in **§4.4**.
+
+**Request body** adds optional `symbol` (ticker string, e.g. `"NVDA"`). Other fields match pricing endpoints:
+
+```json
+{ "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 100000, "symbol": "AAPL" }
+```
+
+```json
+// Response (abbreviated)
+{
+  "recommendation": "HOLD",
+  "recommendationColor": "warning",
+  "consistencyCheck": { "passed": true, "flags": [] },
+  "validationWarning": false,
+  "impactAnalysis": ["...", "...", "..."],
+  "comparison": { "europeanPrice": 10.45, "asianPrice": 5.68, "discountPct": "45.6%" },
+  "marketNews": {
+    "symbol": "AAPL",
+    "dataSource": "live_google_news_rss",
+    "fetchedAt": "2026-08-12T14:00:00.000Z",
+    "fetchedAtDisplay": "...",
+    "articles": [{ "title": "...", "source": "...", "pubDateIso": "...", "pubDateFormatted": "..." }]
+  },
+  "gemmaText": "...",
+  "executedToolCalls": [],
+  "benchmarkStats": {
+    "cppTimeMs": 130.2,
+    "llmTimeSec": 180.5,
+    "tokensPerSec": 5.2,
+    "modelName": "gemma4:12b"
+  }
+}
+```
+
+Locally requires **Ollama** with `gemma4:12b` (`LLM_PROVIDER=ollama` in `server/.env`). On Docker/Render, use **Gemini** (`LLM_PROVIDER=gemini` + `GEMINI_API_KEY`) — Ollama is not available. Falls back to rule-based text if the LLM is unreachable or misconfigured.
+
+> **Latency note:** Local `gemma4:12b` on `/api/agent/analyze` commonly takes **1–5+ minutes** wall time (`llmTimeSec` in `benchmarkStats`). Gemini on deploy is much faster. Optional tool-calling rounds (`get_market_news`, `calculate_greeks`) add a second inference pass.
+
+### 3.5 MFT Trading Arena
+
+Optional intraday simulation with rules-based batch replay and paced SSE sessions (including `ai_agent` with Gemma in the loop). See **[`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md)** for batch replay, live session endpoints, SSE events, risk limits, and intraday data sources.
+
+### 3.6 Simulation History (MongoDB)
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/history` | List saved simulations |
+| `POST` | `/api/history` | Persist a simulation run |
+| `GET` | `/api/history/:id` | Fetch by MongoDB ObjectId |
+| `PUT` | `/api/history/:id` | Update name/description/tags |
+
+Requires MongoDB (`MONGO_URI`); server starts without DB if connection fails.
+
+**POST body** (`POST /api/history`):
+
+```json
+{
+  "name": "AAPL European Run",
+  "description": "Optional notes",
+  "tags": ["european", "AAPL"],
+  "simulationType": "black-scholes",
+  "parameters": { "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 100000 },
+  "result": { "optionPrice": 10.45, "confidenceLower": 10.40, "confidenceUpper": 10.50, "executionTimeMs": 1.52 }
+}
+```
+
+`simulationType` must be one of the enum values in `SimulationHistory.js` (currently `"black-scholes"`). `parameters` and `result` are free-form objects.
+
+---
+
+## 4. Gemma Agent (`server/utils/gemma_agent.js`)
+
+LLM integration via `server/utils/llm_provider.js` — switchable by env (backend only):
+
+| `LLM_PROVIDER` | Backend | Model (default) | Notes |
+| :--- | :--- | :--- | :--- |
+| `ollama` (default) | Local Ollama `POST /api/chat` | `gemma4:12b` | Requires Ollama running locally |
+| `gemini` or `google` | Google Gemini OpenAI-compatible API | `gemini-2.0-flash` | **Docker/Render default** — set `GEMINI_API_KEY` and `LLM_PROVIDER=gemini` |
+| `groq` | Groq OpenAI-compatible API | `llama-3.3-70b-versatile` | Optional alternative; set `GROQ_API_KEY` and `LLM_PROVIDER=groq` |
+
+**Local dev** (`server/.env`):
+
+```bash
+LLM_PROVIDER=ollama
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=gemma4:12b
+OLLAMA_TIMEOUT_MS=0
+```
+
+**Deploy** (root `.env` for Docker Compose, Render dashboard for production):
+
+```bash
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...                   # store in server/.env (gitignored), referenced by Compose
+GEMINI_MODEL=gemini-2.0-flash
+```
+
+If `LLM_PROVIDER=gemini` without `GEMINI_API_KEY`, agent routes return a clear fallback error.
+
+### 4.1 Registered Tools
+
+| Tool | Handler |
+| :--- | :--- |
+| `get_market_news` | `market_news.getMarketNews(symbol)` — **Google News RSS only** (not arbitrary web search) |
+| `calculate_greeks` | `monteCarloService.calculateGreeks(...)` — C++ engine |
+
+### 4.2 Entry Points
+
+| Function | Used By | Purpose |
+| :--- | :--- | :--- |
+| `runGemmaAgent(prompt)` | `POST /api/agent/analyze` | Risk audit with optional tool loop |
+| `runGemmaTradingStep(observation, history)` | MFT arena sessions | Structured trade JSON per tick — see [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md) |
+
+### 4.3 Temporal Semantics
+
+News articles carry wall-clock `fetchedAt` / `pubDateIso`. The agent system prompt instructs Gemma to compare events using explicit ISO 8601 timestamps. Arena sessions additionally use a synthetic simulation clock — details in [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md).
+
+### 4.4 Exact LLM input (`POST /api/agent/analyze`)
+
+`routes.js` runs C++ pricing first, then passes the rendered user prompt to `runGemmaAgent(prompt)` in `gemma_agent.js`. The provider (`llm_provider.js`) sends a non-streaming chat request:
+
+```http
+POST {OLLAMA_URL}/api/chat
+Content-Type: application/json
+
+{ "model": "<OLLAMA_MODEL>", "stream": false, "messages": [...], "tools": [...] }
+```
+
+(Groq uses the OpenAI-compatible chat completions URL when `LLM_PROVIDER=groq`.)
+
+#### LLM call #1 — initial payload
+
+**Two messages** are always sent. Tool schemas are attached **only on this first call**.
+
+**Message 1 — `role: "system"`** (from `runGemmaAgent`):
+
+```text
+You are an autonomous Senior Quantitative Risk Analyst & MFT Volatility Trader. You have access to tools to fetch live web market news and compute sub-2ms C++ Greeks. When answering risk or market questions, call the tools to get real data before forming your final trading decision. IMPORTANT: Simulated price paths use simulationTime ISO timestamps (synthetic replay). Live news from get_market_news uses wall-clock fetchedAt/pubDateIso and may be from a different calendar date. Always compare events using explicit ISO 8601 UTC timestamps — never assume news and simulated ticks are contemporaneous.
+```
+
+**Message 2 — `role: "user"`** (built in `routes.js` after C++ runs):
+
+```text
+You are a Senior Quantitative Risk Analyst. Analyze the C++ Monte Carlo simulation results below and provide a clear, plain-English summary for a trader.
+
+WALL-CLOCK TIME (analysis run): <ISO 8601 UTC at request time>
+
+COMPUTATION RESULTS:
+- Option Style: <Call|Put>
+- Spot Price (S0): $<S0>, Strike (K): $<K>, Volatility (σ): <sigma×100>%, Expiry: <T> years
+- European Monte Carlo Fair Value: $<eurPrice>
+- Asian Option Fair Value (Path Average): $<asianPrice> (Path Discount: <discountVal>%)
+- Greeks: Delta (Δ): <delta>, Vega (ν): <vega>, Theta (Θ): <theta>
+
+MARKET NEWS (<symbol>, fetched <fetchedAtDisplay|fetchedAt>):
+1. "<title>" — <source> (<pubDateFormatted|pubDateIso>)
+2. ...
+
+INSTRUCTIONS:
+1. Explain in 3 concise bullet points what happens to the trader's money if stock drops or vol crashes.
+2. Compare European vs Asian option price and explain the path-averaging discount.
+3. Note whether any headline above could affect vol or directional risk for this option.
+4. Give a final BUY, SELL, or HOLD risk recommendation with justification.
+```
+
+Placeholder sources:
+
+| Placeholder | Source |
+| :--- | :--- |
+| `<eurPrice>`, `<asianPrice>`, `<discountVal>` | C++ European + Asian MC (`numTrials` from request body, Asian uses 252 steps) |
+| `<delta>`, `<vega>`, `<theta>` | C++ CRN Greeks (3 decimal / 2 decimal / 2 decimal) |
+| `<S0>`, `<K>`, `<sigma>`, `<T>`, Call/Put | Request body to `POST /api/agent/analyze` |
+| `<symbol>`, news headlines | `getMarketNews(symbol)` — Google News RSS, default 5 articles (`AGENT_NEWS_DEFAULT_COUNT`); `symbol` defaults to `DEFAULT_SYMBOL` (`AAPL`) |
+
+**Example user message** (defaults `S0=100`, `K=100`, `σ=0.20`, `T=1`, Call):
+
+```text
+You are a Senior Quantitative Risk Analyst. Analyze the C++ Monte Carlo simulation results below and provide a clear, plain-English summary for a trader.
+
+WALL-CLOCK TIME (analysis run): 2026-08-12T14:00:00.000Z
+
+COMPUTATION RESULTS:
+- Option Style: Call
+- Spot Price (S0): $100, Strike (K): $100, Volatility (σ): 20.0%, Expiry: 1 years
+- European Monte Carlo Fair Value: $10.44
+- Asian Option Fair Value (Path Average): $5.79 (Path Discount: 44.5%)
+- Greeks: Delta (Δ): 0.637, Vega (ν): 37.58, Theta (Θ): -6.42
+
+MARKET NEWS (AAPL, fetched Aug 12, 2026, 2:00 PM UTC):
+1. "Apple reports record services revenue" — Reuters (Aug 11, 2026, 4:30 PM UTC)
+2. "..."
+
+INSTRUCTIONS:
+1. Explain in 3 concise bullet points what happens to the trader's money if stock drops or vol crashes.
+2. Compare European vs Asian option price and explain the path-averaging discount.
+3. Note whether any headline above could affect vol or directional risk for this option.
+4. Give a final BUY, SELL, or HOLD risk recommendation with justification.
+```
+
+**Tools on call #1** (`GEMMA_TOOLS` in `gemma_agent.js`):
+
+| Tool | Description | Parameters |
+| :--- | :--- | :--- |
+| `get_market_news` | Google News RSS headlines for a ticker | `symbol` (string, required) — default symbol `AAPL` if omitted at execution |
+| `calculate_greeks` | C++ CRN Greeks (`AGENT_GREEKS_NUM_TRIALS`, default 100000) | `S0`, `K`, `r`, `sigma`, `T`, `isCall` (all required) |
+
+#### LLM call #2 — only if tools were invoked
+
+If the model returns `tool_calls` on call #1, the server appends:
+
+1. **`role: "assistant"`** — the model message including `tool_calls` (function name + arguments).
+2. **`role: "tool"`** — one message per tool, `content` is JSON stringified tool output:
+   - `get_market_news` → `{ toolName, symbol, dataSource, fetchedAt, fetchedAtDisplay, articles[] }` (default 5 articles via `AGENT_NEWS_DEFAULT_COUNT`)
+   - `calculate_greeks` → `{ toolName, computedAt, optionPrice, greeks, executionTimeMs }`
+
+Call #2 resends the **full conversation** (system + user + assistant + tool messages) with **no `tools` array**. The final assistant `content` becomes `gemmaText` in the API response.
+
+If the model answers without tools (common), there is **only one** LLM call.
+
+#### What the LLM does *not* receive
+
+| Not sent | Notes |
+| :--- | :--- |
+| Request fields `numTrials`, `r` | Unless the model puts them in a `calculate_greeks` tool call |
+| Raw Monte Carlo paths or trial arrays | Only summarized prices and Greeks |
+| Prior chat history | Each audit is a fresh thread |
+| UI `impactAnalysis` bullets | Server-computed **after** the LLM returns; not part of the prompt |
+| UI `marketNews` section | Same RSS fetch embedded in the user prompt; returned separately for display |
+| Streaming | `stream: false` — client waits for the full completion |
+
+> **News is always prefetched** for `/api/agent/analyze` (in the user prompt). The model may still call `get_market_news` again via tools, which duplicates the fetch. **Prompt overlap:** The system message tells the model to call tools for real data; the user message already embeds C++ prices, Greeks, and headlines. That can trigger redundant tool calls (especially `calculate_greeks`) and a second, slower inference pass — see latency notes in §3.4.
+
+MFT arena trading steps (`runGemmaTradingStep`) use a **different** system prompt, observation JSON, and trade-decision schema — see [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md).
+
+---
+
+## 5. MCP Server (`server/mcp_server.js`)
+
+Standalone **JSON-RPC 2.0 over stdio** process — separate from both the Express app and the HTTP LLM client in `gemma_agent.js` (which routes through `llm_provider.js` for Ollama or Groq). Compatible with Claude Desktop, Cursor, and the Python agents in `examples/agent/`.
+
+```bash
+node server/mcp_server.js
+```
+
+### 5.1 Tools
+
+| Tool | Maps To |
+| :--- | :--- |
+| `price_european_option` | `calculateOptionPrice` |
+| `price_asian_option` | `calculateAsianOptionPrice` |
+| `calculate_greeks` | `calculateGreeks` |
+| `simulate_delta_hedging` | `simulateDeltaHedging` |
+| `run_benchmark` | C++ vs JS latency comparison |
+
+### 5.2 Protocol Methods
+
+- `initialize` — handshake
+- `tools/list` — enumerate tools
+- `tools/call` — invoke a tool
+
+Example:
+
+```json
+{ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "calculate_greeks", "arguments": { "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 100000 } } }
 ```
 
 ---
 
-## 🗄️ 5. Database Schema Specification (`server/models/SimulationHistory.js`)
+## 6. Market Data & Timestamps
 
-Simulation runs are persisted to MongoDB when database connectivity is enabled.
+### 6.1 `market_data.js` & `yahoo_finance.js`
+
+`yahoo_finance.js` exports a shared **yahoo-finance2 v3.15.4** client (`new YahooFinance()`). `market_data.js` uses it to fetch:
+
+- **Spot** — `quote(symbol)`
+- **ATM implied vol** — nearest-expiration `options()` chain
+- **252-day trailing vol** — daily closes via `chart()` (replaces deprecated `historical()`)
+
+Falls back to cached ticker defaults when Yahoo is unreachable.
+
+### 6.2 `market_news.js`
+
+Queries `https://news.google.com/rss/search?q={symbol}+stock`. Zero API keys. Returns normalized articles with ISO timestamps via `time_format.js`.
+
+### 6.3 `time_format.js`
+
+All machine fields are ISO 8601 UTC:
+
+| Export | Purpose |
+| :--- | :--- |
+| `toIsoUtc(date)` | Normalize to ISO 8601 UTC |
+| `formatDisplay(iso)` | Human-readable UTC string |
+| `getSessionAnchorIso(dateStr)` | Synthetic session open (9:30 AM ET → UTC) |
+| `buildSimulationTickTime(minute, anchor)` | Per-tick simulated clock → `simulationTimeIso` |
+| `normalizeNewsArticle(article)` | Consistent news article shape with `pubDateIso` |
+
+---
+
+## 7. Python Agents (`examples/agent/`)
+
+Optional offline scripts that wire Ollama + MCP without the Express server:
+
+| Script | Purpose |
+| :--- | :--- |
+| `local_quant_agent.py` | End-to-end quant Q&A via MCP tools + Gemma |
+| `benchmark_distribution.py` | Repeated MCP + Gemma latency/convergence benchmark |
+
+Both expect:
+- Node.js with built C++ binary
+- Ollama running with `gemma4:12b`
+- Run from repo root: `python examples/agent/local_quant_agent.py`
+
+---
+
+## 8. MongoDB Schema (`server/models/SimulationHistory.js`)
+
+Persisted when MongoDB is connected:
 
 ```javascript
-const simulationHistorySchema = new mongoose.Schema({
-  timestamp: { type: Date, default: Date.now, index: true },
-  optionType: { type: String, enum: ['european', 'asian', 'delta_hedge'], required: true },
-  symbol: { type: String, uppercase: true },
-  parameters: {
-    S0: Number, K: Number, r: Number, sigma: Number, T: Number,
-    isCall: Boolean, numTrials: Number, numSteps: Number
-  },
-  results: {
-    optionPrice: Number,
-    confidenceLower: Number,
-    confidenceUpper: Number,
-    executionTimeMs: Number,
-    greeks: { delta: Number, gamma: Number, vega: Number, theta: Number, rho: Number },
-    summaryStatistics: { meanPnL: Number, stdDevPnL: Number, var95: Number, cvar95: Number }
-  }
-});
+{
+  name: String,           // default: 'Untitled Simulation'
+  description: String,    // default: ''
+  tags: [String],         // default: []
+  simulationType: String, // required; enum: ['black-scholes']
+  parameters: Object,     // required — simulation inputs (S0, K, r, sigma, T, isCall, numTrials, …)
+  result: Object,         // required — pricing output (optionPrice, confidence, greeks, …)
+  createdAt: Date         // auto-set
+}
 ```
 
 ---
 
-## 🛠️ 6. AI Agent Step-by-Step Blueprint for Exact Replication
+## 9. Setup & Prerequisites
 
-To replicate this backend system from scratch:
+### 9.1 Requirements
 
-1. **Build Environment & Prerequisites:**
-   * Install GCC/Clang with C++17 support (`g++ >= 9.0` or `clang++ >= 11.0`), CMake $\ge 3.14$, Node.js $\ge 18.0$, and MongoDB (optional).
+| Dependency | Version / Notes |
+| :--- | :--- |
+| GCC/Clang | C++17 (`g++ >= 9` or `clang++ >= 11`) |
+| CMake | $\ge 3.14$ |
+| Node.js | $\ge 18$ |
+| MongoDB | Optional — history persistence |
+| Ollama | Required for local `/api/agent/analyze` (`gemma4:12b`); use **Gemini** on Docker/Render (see §11). MFT arena `ai_agent` sessions also need an LLM — see [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md) |
 
-2. **C++ Native Engine Compilation:**
-   * Place `monte_carlo.cpp` in `server/cpp/src/`.
-   * Compile binary:
-     ```bash
-     cd server/cpp && mkdir -p build && cd build
-     cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
-     ```
-   * Verify executable CLI mode 3: `./monte_carlo 100 100 0.05 0.20 1.0 1 100000 3 0`
+### 9.2 Install & Run (local dev)
 
-3. **Node.js Backend Dependencies:**
-   * Install server packages:
-     ```bash
-     cd server && npm install express cors helmet express-mongo-sanitize express-rate-limit express-validator xss-clean yahoo-finance2 mongoose
-     ```
+```bash
+# 0. Env files (first time)
+cp server/.env.example server/.env
+cp client/.env.example client/.env
+# Edit server/.env if needed (LLM_PROVIDER, OLLAMA_URL, etc.)
 
-4. **Start Server:**
-   ```bash
-   node server/server.js
-   ```
-   Backend listens on port `5001`. Verify API health via `curl http://localhost:5001/api/health`.
+# 1. Build C++ engine
+cd server/cpp && ./build.sh && cd ../..
 
-5. **Start MCP Server for AI Agents:**
-   ```bash
-   node server/mcp_server.js
-   ```
-   Pass stdio JSON-RPC requests to interact with quantitative engine tools autonomously.
+# 2. Install dependencies (server postinstall attempts C++ build)
+cd server && npm install && cd ..
+cd client && npm install && cd ..
+
+# 3. Pull Ollama model (default: gemma4:12b; override with OLLAMA_MODEL)
+ollama pull gemma4:12b
+ollama serve   # if not already running
+
+# 4. Start API + React dev server (recommended — from repo root)
+npm install    # root dev tooling (concurrently, nodemon)
+npm run dev
+# → UI http://localhost:3000  (CRA proxies /api → :5001)
+# → API http://localhost:5001/api/health
+
+# Or start separately:
+#   cd server && npm start
+#   cd client && npm start
+```
+
+**Server runtime deps** (`server/package.json`): includes **`undici`** for Ollama HTTP (long-running local inference timeouts via `OLLAMA_TIMEOUT_MS`).
+
+### 9.3 Environment Variables
+
+Copy `server/.env.example` to `server/.env`. Variables are loaded automatically via **dotenv** at server startup (`server/server.js`). **All defaults live in `server/config.js`** — not scattered in route handlers or utilities.
+
+| Variable | Default (in `config.js`) | Description |
+| :--- | :--- | :--- |
+| `PORT` | `5001` | Express listen port |
+| `NODE_ENV` | `development` | `production` tightens CORS/rate limits |
+| `MONGO_URI` | `mongodb://localhost:27017/montecarlo` | Optional — history persistence |
+| `MONGO_DB_NAME` | `montecarlo` | Mongo database name |
+| `CLIENT_BUILD_PATH` | *(empty → `../client/build`)* | React static files for unified deploy |
+| `BODY_LIMIT` | `10kb` | JSON body size limit |
+| `CORS_ORIGINS` | `http://localhost:3000,https://montecarlosuitefe.onrender.com` | Comma-separated allowed origins (production) |
+| `RATE_LIMIT_WINDOW_MS` | `900000` | Rate limit window (15 min) |
+| `RATE_LIMIT_MAX_PRODUCTION` | `1000` | Max requests per window (production) |
+| `RATE_LIMIT_MAX_DEVELOPMENT` | `10000` | Max requests per window (development) |
+| `LLM_PROVIDER` | `ollama` | LLM backend — local default; set `gemini` for Docker/Render (see §13) |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama base URL (local only) |
+| `OLLAMA_MODEL` / `GEMMA_MODEL` | `gemma4:12b` | Ollama model for AI agent routes |
+| `OLLAMA_TIMEOUT_MS` | `0` | Ollama fetch timeout (`0` = no timeout; needed for local 12B) |
+| `GROQ_API_KEY` | — | Required when `LLM_PROVIDER=groq` |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model name |
+| `GROQ_API_URL` | `https://api.groq.com/openai/v1/chat/completions` | Groq chat completions endpoint |
+| `GROQ_TIMEOUT_MS` | `120000` | Groq request timeout (ms) |
+| `GROQ_KEYS_URL` | `https://console.groq.com/keys` | Link shown in missing-key errors |
+| `GEMINI_API_KEY` | — | Required when `LLM_PROVIDER=gemini` |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model name |
+| `GEMINI_API_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` | Gemini chat completions endpoint |
+| `GEMINI_TIMEOUT_MS` | `120000` | Gemini request timeout (ms) |
+| `GEMINI_KEYS_URL` | `https://aistudio.google.com/apikey` | Link shown in missing-key errors |
+| `DEFAULT_SYMBOL` | `AAPL` | Default ticker for news/MFT/market routes |
+| `MARKET_NEWS_RSS_URL` | `https://news.google.com/rss/search` | Google News RSS base URL |
+| `MARKET_NEWS_RSS_LOCALE` | `en-US` | RSS locale |
+| `MARKET_NEWS_RSS_REGION` | `US` | RSS region |
+| `MARKET_NEWS_DEFAULT_COUNT` | `5` | Default article count |
+| `MARKET_NEWS_MAX_COUNT` | `20` | Max articles per request |
+| `POLYGON_API_KEY` | — | Optional Polygon intraday data |
+| `POLYGON_API_BASE_URL` | `https://api.polygon.io` | Polygon API base |
+| `POLYGON_INTRADAY_LIMIT` | `500` | Max Polygon 1m bars per request |
+| `INTRADAY_MAX_BARS` | `390` | Max intraday bars (arena) |
+| `INTRADAY_ROLLING_VOL_WINDOW` | `20` | Rolling vol window (arena) |
+| `INTRADAY_DEFAULT_VOL` | `0.25` | Fallback vol when history thin |
+| `MFT_DEFAULT_CAPITAL` | `100000` | Arena default capital |
+| `MFT_DEFAULT_TIME_WINDOW` | `30` | Arena default session minutes |
+| `MFT_DEFAULT_TICK_INTERVAL_MS` | `2000` | Arena paced tick delay |
+| `MFT_DEFAULT_GEMMA_INTERVAL` | `5` | Arena LLM decision every N ticks |
+| `MFT_DEFAULT_DATA_SOURCE` | `yahoo` | Arena data source (`yahoo` / `polygon` / `synthetic`) |
+| `AGENT_GREEKS_NUM_TRIALS` | `100000` | Monte Carlo trials for agent `calculate_greeks` tool |
+| `AGENT_NEWS_DEFAULT_COUNT` | `5` | Headlines prefetched for `/api/agent/analyze` |
+| `VALIDATION_STRONG_DELTA` | `0.5` | Greeks vs recommendation consistency threshold |
+| `VALIDATION_STRONG_VEGA` | `25` | Vega consistency threshold |
+
+**Client** (`client/.env.example`):
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `REACT_APP_API_URL` | *(empty)* | API base; empty = same-origin or CRA dev proxy |
+| `REACT_APP_PROXY_TARGET` | `http://localhost:5001` | CRA dev proxy target for `/api/*` |
+
+LLM routing is handled by `server/utils/llm_provider.js` reading from `server/config.js`. Ollama is **not** required on Render — set `GEMINI_API_KEY` and `LLM_PROVIDER=gemini` instead.
+
+#### LLM configuration by environment
+
+| | **Local dev** (`npm run dev`) | **Docker Compose** | **Render** |
+| :--- | :--- | :--- | :--- |
+| Config files | `server/.env` | root `.env` + `server/.env` | Render dashboard env vars |
+| `LLM_PROVIDER` | `ollama` | `gemini` | `gemini` |
+| Model | `gemma4:12b` (Ollama) | `gemini-2.0-flash` | `gemini-2.0-flash` |
+| API key var | *(none — local Ollama)* | `GEMINI_API_KEY` | `GEMINI_API_KEY` |
+| Ollama required | Yes (`ollama pull gemma4:12b`) | No | No |
+
+Store `GEMINI_API_KEY` in `server/.env` only (gitignored). Docker Compose reads it via `env_file: server/.env` and overrides `LLM_PROVIDER` from root `.env`.
+
+### 9.4 Verify
+
+```bash
+curl http://localhost:5001/api/health
+curl http://localhost:5001/api/implementation-status
+
+curl -X POST http://localhost:5001/api/black-scholes/cpp \
+  -H "Content-Type: application/json" \
+  -d '{"S0":100,"K":100,"r":0.05,"sigma":0.2,"T":1,"isCall":true,"numTrials":100000}'
+
+curl http://localhost:5001/api/market-news/AAPL
+```
+
+### 9.5 Optional — MCP server
+
+```bash
+node server/mcp_server.js
+```
+
+---
+
+## 10. React Frontend (`client/`)
+
+Local dev UI: **http://localhost:3000** (proxies `/api` → `:5001` via `client/src/setupProxy.js` and `REACT_APP_PROXY_TARGET`). Production / Docker serves the built app from `client/build` on the same port as the API.
+
+### 10.1 Layout
+
+| Area | Component | Role |
+| :--- | :--- | :--- |
+| Top nav | `BlackScholes.js` | Tabs: **Option Simulator**, **Delta-Hedge Simulator**; history modal |
+| Config panel | `ConfigBar.js` | All inputs in one top card (wraps on narrow screens — no horizontal scroll) |
+| Results | `ResultsPanel.js`, charts | C++ vs JS pricing, Greeks, paths, convergence |
+| AI audit | `QuantAgentPanel.js` | Calls `POST /api/agent/analyze` with params + selected ticker `symbol` |
+
+### 10.2 Config panel (`ConfigBar.js`)
+
+Single rectangle under the nav, three rows:
+
+1. **Ticker** — preset chips (AAPL, TSLA, …), symbol input, **Load quote** (Yahoo `/api/market/:ticker` or offline presets)
+2. **Parameters** — responsive grid; fields change by tab:
+   - *Option Simulator:* Style (European/Asian), Call/Put, S₀, K, σ, r, T, Trials
+   - *Delta-Hedge:* S₀, K, σ, r, T, Call/Put, Paths, Rebalance, Tx cost (bps)
+3. **Run** — *Run Monte Carlo Simulation* or *Run Delta-Hedging Simulation*
+
+Ticker selection flows into **AI Risk Audit** as the `symbol` sent to `/api/agent/analyze`.
+
+### 10.3 Option Simulator sub-views
+
+| Sub-view | Content |
+| :--- | :--- |
+| Fair Value & Greeks | `ResultsPanel` after C++ run |
+| Trajectories & Accuracy | Price paths + convergence charts |
+| AI Risk Analyst | Four sections: (1) Impact audit — server-computed from Greeks; (2) European vs Asian; (3) Live Market News; (4) Gemma prose (`gemmaText`) |
+
+### 10.4 Key client files
+
+| File | Role |
+| :--- | :--- |
+| `client/src/apiConfig.js` | `API_BASE_URL` from `REACT_APP_API_URL` |
+| `client/src/setupProxy.js` | Dev-only `/api` proxy to backend |
+| `client/src/components/BlackScholes.js` | Main dashboard shell |
+| `client/src/components/ConfigBar.js` | Unified config panel |
+| `client/src/components/QuantAgentPanel.js` | AI audit UI + what-if buttons |
+
+Legacy components `ParameterForm.js` and `TickerLookup.js` remain in the repo but are superseded by `ConfigBar.js`.
+
+---
+
+## 11. Docker Deployment
+
+Unified **single-container** image: C++ engine + Express API + React static UI. Compatible with [Render](https://render.com) Web Services (`docker build` + `docker run`, respects `PORT`).
+
+### 11.1 Prerequisites
+
+- Docker Engine 24+ (or Docker Desktop)
+- For AI agent routes in containers: set `LLM_PROVIDER=gemini` and `GEMINI_API_KEY` (Ollama is local-only unless you add a sidecar — see below)
+
+### 11.2 Build & run (production image)
+
+From the repo root:
+
+```bash
+# Build
+docker build -t montecarlosuite .
+
+# Run (API + UI on one port)
+docker run --rm -p 5001:5001 \
+  -e PORT=5001 \
+  -e LLM_PROVIDER=gemini \
+  -e GEMINI_API_KEY=your_key_here \
+  montecarlosuite
+```
+
+Open `http://localhost:5001` for the React UI; API at `http://localhost:5001/api/health`.
+
+The image runs as non-root user `nodeapp` (uid 1001), exposes port **5001** by default (`ENV PORT=5001`; override at runtime), and includes a Docker **HEALTHCHECK** on `/api/health`.
+
+**Render:** create a Web Service → Environment **Docker**, set root `Dockerfile`, and add env vars (`GEMINI_API_KEY`, `LLM_PROVIDER=gemini`, optional `MONGO_URI`). Render injects `PORT` automatically — do not hardcode it in `CMD`. See **§13** for full Render setup.
+
+> **Legacy Dockerfiles:** `server/Dockerfile` and `client/Dockerfile` supported the old split backend/frontend Render layout. Use the **root `Dockerfile`** for new deployments (§13).
+
+### 11.3 Local stack with MongoDB (`docker compose`)
+
+```bash
+cp .env.example .env
+cp server/.env.example server/.env
+# Set GEMINI_API_KEY in server/.env; root .env sets LLM_PROVIDER=gemini for deploy
+
+# App only (server starts without Mongo if MONGO_URI unreachable)
+docker compose up --build
+
+# App + MongoDB sidecar
+docker compose --profile mongo up --build
+```
+
+| Command | Services | Notes |
+| :--- | :--- | :--- |
+| `docker compose up --build` | App only | History API needs a reachable `MONGO_URI` |
+| `docker compose --profile mongo up --build` | App + Mongo | Set `MONGO_URI=mongodb://mongo:27017/montecarlo` in `.env` |
+
+| Service | URL / port |
+| :--- | :--- |
+| App (API + UI) | `http://localhost:5001` |
+| MongoDB (with `--profile mongo`) | `localhost:27018` (host) → `mongo:27017` (network) |
+
+The production image includes a **HEALTHCHECK** on `GET /api/health`. Compose runs the same check on the `app` service.
+
+Compose defaults `LLM_PROVIDER` to `gemini` in root `.env.example` and `docker-compose.yml`. For **local Ollama inside a container** on Mac/Windows/Linux, set `LLM_PROVIDER=ollama` and `OLLAMA_URL=http://host.docker.internal:11434` in both `.env` and `server/.env`, or uncomment the optional `ollama` sidecar in `docker-compose.yml` and use `OLLAMA_URL=http://ollama:11434`.
+
+### 11.4 Environment variables (Docker / Render)
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `PORT` | `5001` | Listen port (Render sets this) |
+| `NODE_ENV` | `production` | Set in Docker image |
+| `CLIENT_BUILD_PATH` | `./client/build` | React static files (set in image) |
+| `MONGO_URI` | `mongodb://localhost:27017/montecarlo` | Optional history DB |
+| `LLM_PROVIDER` | `gemini` (Compose default) | Set to `gemini` on Render; `ollama` for local npm dev |
+| `GEMINI_API_KEY` | — | Required when `LLM_PROVIDER=gemini` |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model id |
+| `GROQ_API_KEY` | — | Optional when `LLM_PROVIDER=groq` |
+| `OLLAMA_URL` | `http://localhost:11434` | Local / sidecar Ollama only |
+
+See `server/.env.example` for a full template.
+
+### 11.5 Non-Docker local dev
+
+See **§9.2** for the full local workflow (`npm run dev`, env files, Ollama). Docker is optional — use the unified image for production-like and Render deployments.
+
+---
+
+## 12. Backend Module Reference
+
+| Module | Responsibility |
+| :--- | :--- |
+| `monte_carlo_cpp.js` | Spawns C++ binary via `execFile`, parses stdout JSON |
+| `monte_carlo_service.js` | Unified facade: C++ primary, JS fallback |
+| `monte_carlo_js.js` | Pure JS Monte Carlo for benchmarking |
+| `black_scholes_analytical.js` | Closed-form validation |
+| `gemma_agent.js` | LLM chat (Ollama/Gemini/Groq), tool calling, trading decision parser |
+| `llm_provider.js` | Ollama / Gemini / Groq provider abstraction (`undici` for Ollama) |
+| `recommendation_validator.js` | Parses BUY/SELL/HOLD from Gemma text; Greeks consistency flags |
+| `market_data.js` | Yahoo Finance integration (uses `yahoo_finance.js`) |
+| `yahoo_finance.js` | Shared yahoo-finance2 client singleton |
+| `options_chain.js` | Yahoo options chain, ATM strike/IV picker |
+| `vol_surface.js` | IV surface from options chain |
+| `market_news.js` | Google News RSS |
+| `time_format.js` | ISO 8601 timestamp utilities |
+| `mcp_server.js` | Stdio MCP JSON-RPC server |
+
+MFT arena modules (`mft_trading_arena.js`, `mft_arena_session.js`, `intraday_provider.js`, `risk_limits.js`) are documented in [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md).
+
+---
+
+## 13. Render Deployment
+
+MonteCarloSuite deploys to [Render](https://render.com) as a **single Web Service** using the root `Dockerfile` (see §11). One URL serves both the React UI and the Express API — same-origin requests, so **`REACT_APP_API_URL` is not required** in the unified image (the build leaves it empty; Express serves static files from `client/build`).
+
+There is no `render.yaml` in the repo — configure via the Render dashboard.
+
+### 13.1 Create the Web Service
+
+1. **Render Dashboard** → **New** → **Web Service** → connect your repo
+2. **Environment:** Docker
+3. **Dockerfile path:** `./Dockerfile` (repo root — **not** `server/Dockerfile` or `client/Dockerfile`)
+4. Add environment variables (§13.2)
+5. Deploy — Render injects `PORT` automatically; do not hardcode it in `CMD`
+
+After deploy:
+
+| Resource | URL |
+| :--- | :--- |
+| React UI | `https://your-service.onrender.com` |
+| API health | `https://your-service.onrender.com/api/health` |
+
+Verify:
+
+```bash
+curl https://your-service.onrender.com/api/health
+curl https://your-service.onrender.com/api/implementation-status
+```
+
+`implementation-status` reports `cpp_available`, `llm_provider`, `llm_model`, `groq_configured`, and `gemini_configured`.
+
+### 13.2 Required Environment Variables
+
+Set in **Render Dashboard → Web Service → Environment**:
+
+| Variable | Required | Value / Notes |
+| :--- | :---: | :--- |
+| `NODE_ENV` | Yes | `production` |
+| `PORT` | Auto | Render injects this — do not hardcode |
+| `GEMINI_API_KEY` | **Yes for AI** | Key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `LLM_PROVIDER` | **Yes for AI on Render** | `gemini` — must be set explicitly; code default is `ollama` |
+| `GEMINI_MODEL` | Optional | `gemini-2.0-flash` (default) |
+| `MONGO_URI` | Optional | MongoDB Atlas connection string for simulation history |
+| `OLLAMA_URL` | No | Not used on Render — Ollama cannot run on Render |
+
+**Ollama is not required on Render.** Without `GEMINI_API_KEY`, AI routes (`POST /api/agent/analyze`, MFT arena `ai_agent` sessions) return a rule-based fallback instead of live LLM inference.
+
+### 13.3 C++ on Render
+
+The root `Dockerfile` builds the C++ engine in a multi-stage builder (`cmake` + `make`) and copies `monte_carlo` into the runtime image — **preferred** on Render.
+
+| Fallback | C++ behavior |
+| :--- | :--- |
+| JS fallback (if binary missing) | European/Asian pricing + analytical Greeks still work; delta-hedge simulation requires C++ |
+
+### 13.4 Legacy split deploy (optional migration)
+
+Older setups used **two separate Render services** — a backend Web Service and a frontend Static Site or client container. That layout is deprecated in favor of the unified root `Dockerfile`.
+
+| Legacy service | Old config |
+| :--- | :--- |
+| Backend API | Root dir: `server`, Dockerfile: `server/Dockerfile` (**legacy**) |
+| Frontend | Root dir: `client`, Dockerfile: `client/Dockerfile` (**legacy**), build arg `REACT_APP_API_URL=https://your-backend.onrender.com` |
+
+**Migration path:** deploy the unified root `Dockerfile` as a single Web Service, verify UI + API on one origin, then decommission the separate frontend service. `server/Dockerfile` and `client/Dockerfile` remain in the repo for reference only — do not use them for new Render deployments.
+
+For local prod-like testing without Render, use `docker compose up --build` (§11.3).

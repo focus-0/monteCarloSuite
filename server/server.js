@@ -1,9 +1,14 @@
+require('dotenv').config();
+
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
+const config = require('./config');
 const routes = require('./src/routes');
 const monteCarloService = require('./utils/monte_carlo_service');
 const connectDB = require('./config/db');
@@ -19,8 +24,8 @@ app.use(helmet());
 
 // Rate limiting - relaxed for high-frequency simulation runs and benchmarks
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 1000 : 10000, // 10,000 requests per 15 mins for local testing
+  windowMs: config.rateLimit.windowMs,
+  max: config.nodeEnv === 'production' ? config.rateLimit.maxProduction : config.rateLimit.maxDevelopment,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
@@ -30,13 +35,12 @@ const apiLimiter = rateLimit({
 app.use('/api/', apiLimiter);
 
 // Body parser
-app.use(express.json({ limit: '10kb' })); // Body limit is 10kb
+app.use(express.json({ limit: config.bodyLimit }));
 
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? 
-    ['http://localhost:3000', 'https://montecarlosuitefe.onrender.com'] : '*',
+  origin: config.nodeEnv === 'production' ? config.corsOrigins : '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -49,14 +53,28 @@ app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({
     status: 'error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    message: config.nodeEnv === 'development' ? err.message : 'Something went wrong'
   });
 });
 
-app.get("/", (req, res) => {
-  res.send("Monte Carlo Suite API is live 🚀");
-});
+// Serve React client when a production build is present (Docker / unified deployment)
+const clientBuildPath = config.clientBuildPath
+  ? path.resolve(config.clientBuildPath)
+  : path.join(__dirname, '..', 'client', 'build');
+const clientIndexPath = path.join(clientBuildPath, 'index.html');
 
+if (fs.existsSync(clientIndexPath)) {
+  app.use(express.static(clientBuildPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(clientIndexPath);
+  });
+  console.log(`Serving React client from ${clientBuildPath}`);
+} else {
+  app.get('/', (req, res) => {
+    res.send('Monte Carlo Suite API is live 🚀');
+  });
+}
 
 // 404 handler
 app.use((req, res) => {
@@ -67,9 +85,8 @@ app.use((req, res) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(config.port, () => {
+  console.log(`Server running on port ${config.port}`);
   
   // Log which implementation is available
   const status = monteCarloService.getImplementationStatus();

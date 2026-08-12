@@ -1,6 +1,8 @@
-# ----------------------------
-# Stage 1: C++ Builder
-# ----------------------------
+# Legacy split-service image — prefer the root Dockerfile for production / Render.
+# Build from repo root: docker build -t montecarlosuite .
+#
+# This file builds API-only (no React). Kept for reference.
+
 FROM node:18-alpine as builder
 
 WORKDIR /app
@@ -36,6 +38,9 @@ COPY . .
 # We place it in ./cpp/monte_carlo so your Node server finds it at "cpp/monte_carlo"
 COPY --from=builder /app/cpp/monte_carlo ./cpp/monte_carlo
 
-EXPOSE 5001
+ARG PORT=5001
+ENV PORT=$PORT
+
+EXPOSE ${PORT}
 
 CMD ["npm", "start"]

@@ -6,14 +6,14 @@ Measures latency for C++ Engine, MCP Bridge, Gemma LLM Inference, and Tokens/Sec
 """
 
 import json
+import os
 import subprocess
 import urllib.request
 import urllib.error
 import time
 import sys
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL_NAME = "gemma4:e2b-mlx"  # Apple Silicon MLX Gemma model tag
+from env_config import OLLAMA_CHAT_URL as OLLAMA_URL, MODEL_NAME
 
 MCP_SERVER_CMD = ["node", "server/mcp_server.js"]
 

@@ -2,29 +2,40 @@
 .git
 .gitignore
 
-# Node.js dependencies
+# Dependencies (reinstalled in image)
 node_modules
-npm-debug.log
-yarn-debug.log
-yarn-error.log
+**/node_modules
 
-# Build artifacts
-build
+# Local env / secrets
+.env
+.env.*
+**/.env
+**/.env.local
+**/.env.*.local
+!.env.example
+!**/.env.example
+
+# Build artifacts (rebuilt in image)
+client/build
+server/cpp/build
+server/cpp/monte_carlo
 dist
 
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# Logs & caches
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
 
-# IDE files
+# IDE / OS
 .vscode
 .idea
 *.swp
 *.swo
-
-# System files
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Docs & examples (not needed at runtime)
+docs
+examples
+agent

@@ -4,8 +4,18 @@
  * Zero API keys, zero rate limits, sub-100ms latency.
  */
 
-async function getMarketNews(symbol = 'AAPL', count = 5) {
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(symbol)}+stock&hl=en-US&gl=US&ceid=US:en`;
+const config = require('../config');
+const { toIsoUtc, formatDisplay, normalizeNewsArticle } = require('./time_format');
+
+function buildNewsRssUrl(symbol) {
+  const { rssBaseUrl, rssLocale, rssRegion } = config.marketNews;
+  const query = encodeURIComponent(`${symbol} stock`);
+  return `${rssBaseUrl}?q=${query}&hl=${rssLocale}&gl=${rssRegion}&ceid=${rssRegion}:${rssLocale.split('-')[0] || 'en'}`;
+}
+
+async function getMarketNews(symbol = config.defaultSymbol, count = config.marketNews.defaultCount) {
+  const fetchedAt = new Date().toISOString();
+  const url = buildNewsRssUrl(symbol);
 
   try {
     const res = await fetch(url);
@@ -23,20 +33,8 @@ async function getMarketNews(symbol = 'AAPL', count = 5) {
       // Extract publication date
       const pubDateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/);
       const pubDateRaw = pubDateMatch ? pubDateMatch[1] : null;
-      let pubDate = null;
-      let pubDateFormatted = 'Unknown Date';
-      if (pubDateRaw) {
-        pubDate = new Date(pubDateRaw);
-        pubDateFormatted = pubDate.toLocaleString('en-US', {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          timeZoneName: 'short'
-        });
-      }
+      const pubDateIso = toIsoUtc(pubDateRaw);
+      const pubDateFormatted = pubDateIso ? formatDisplay(pubDateIso) : 'Unknown Date';
 
       // Extract source/publisher
       const sourceMatch = item.match(/<source[^>]*>(.*?)<\/source>/);
@@ -46,19 +44,24 @@ async function getMarketNews(symbol = 'AAPL', count = 5) {
       const linkMatch = item.match(/<link>(.*?)<\/link>/);
       const link = linkMatch ? linkMatch[1].trim() : '';
 
-      return {
+      return normalizeNewsArticle({
         title,
         source,
         pubDate: pubDateRaw,
+        pubDateIso,
         pubDateFormatted,
         link,
-        ageMinutes: pubDate ? Math.round((Date.now() - pubDate.getTime()) / 60000) : null
-      };
+        ageMinutes: pubDateIso
+          ? Math.round((Date.now() - new Date(pubDateIso).getTime()) / 60000)
+          : null
+      });
     });
 
     return {
       symbol: symbol.toUpperCase(),
-      fetchedAt: new Date().toISOString(),
+      dataSource: 'live_google_news_rss',
+      fetchedAt,
+      fetchedAtDisplay: formatDisplay(fetchedAt),
       articleCount: articles.length,
       articles
     };
@@ -66,7 +69,9 @@ async function getMarketNews(symbol = 'AAPL', count = 5) {
     console.error(`Market News Fetch Error for ${symbol}:`, err.message);
     return {
       symbol: symbol.toUpperCase(),
-      fetchedAt: new Date().toISOString(),
+      dataSource: 'live_google_news_rss',
+      fetchedAt,
+      fetchedAtDisplay: formatDisplay(fetchedAt),
       articleCount: 0,
       articles: [],
       error: err.message
@@ -74,4 +79,4 @@ async function getMarketNews(symbol = 'AAPL', count = 5) {
   }
 }
 
-module.exports = { getMarketNews };
+module.exports = { getMarketNews, normalizeNewsArticle, buildNewsRssUrl };

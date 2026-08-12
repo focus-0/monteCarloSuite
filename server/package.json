@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^7.5.0",
@@ -18,7 +19,8 @@
     "helmet": "^8.1.0",
     "mathjs": "^11.8.0",
     "mongoose": "^8.0.0",
+    "undici": "^7.29.0",
     "xss-clean": "^0.1.4",
-    "yahoo-finance2": "^2.14.2"
+    "yahoo-finance2": "^3.15.4"
   }
 }

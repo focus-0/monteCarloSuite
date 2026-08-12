@@ -1,20 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import ParameterForm from './ParameterForm';
-import TickerLookup from './TickerLookup';
+import ConfigBar from './ConfigBar';
 import ResultsPanel from './ResultsPanel';
 import HistoryTable from './HistoryTable';
-import PerformanceChart from './charts/PerformanceChart';
 import ConvergenceChart from './charts/ConvergenceChart';
 import PricePathsChart from './charts/PricePathsChart';
-import SensitivityChart from './charts/SensitivityChart';
 import QuantAgentPanel from './QuantAgentPanel';
 import DeltaHedgeSimulator from './DeltaHedgeSimulator';
-import AITradingArena from './AITradingArena';
 
-const API_BASE_URL = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
-  ? '' 
-  : (process.env.REACT_APP_API_URL || '');
+import { API_BASE_URL } from '../apiConfig';
 
 const BlackScholes = () => {
   const [params, setParams] = useState({
@@ -26,12 +20,23 @@ const BlackScholes = () => {
     isCall: true,
     numTrials: 100000
   });
+  const [symbol, setSymbol] = useState('AAPL');
+  const [hedgeParams, setHedgeParams] = useState({
+    numTrials: 5000,
+    numSteps: 252,
+    rebalanceFreq: 1,
+    txCostPct: 0.001
+  });
+  const [hedgeResult, setHedgeResult] = useState(null);
+  const [hedgeLoading, setHedgeLoading] = useState(false);
+  const [hedgeError, setHedgeError] = useState(null);
 
   const [optionType, setOptionType] = useState('european');
   const [activeTab, setActiveTab] = useState('simulator');
   const [resultSubView, setResultSubView] = useState('results');
 
   const [cppResult, setCppResult] = useState(null);
+  const [jsResult, setJsResult] = useState(null);
   const [greeksResult, setGreeksResult] = useState(null);
   const [pathsData, setPathsData] = useState(null);
   const [convergenceData, setConvergenceData] = useState([]);
@@ -39,12 +44,25 @@ const BlackScholes = () => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [showAgentHint, setShowAgentHint] = useState(false);
+  const [showNavMenu, setShowNavMenu] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const navMenuRef = useRef(null);
 
   const handleParamChange = (name, value) => {
-    setParams((prev) => ({ ...prev, [name]: value }));
+    const parsed =
+      name === 'isCall'
+        ? value === true || value === 'true'
+        : name === 'numTrials'
+          ? parseInt(value, 10)
+          : value;
+    setParams((prev) => ({ ...prev, [name]: parsed }));
   };
 
   const handleMarketDataLoaded = (marketData) => {
+    if (marketData.symbol) {
+      setSymbol(marketData.symbol);
+    }
     setParams((prev) => ({
       ...prev,
       S0: marketData.price,
@@ -56,6 +74,7 @@ const BlackScholes = () => {
     if (e) e.preventDefault();
     setLoading(true);
     setError(null);
+    setJsResult(null);
 
     const parsedParams = {
       ...params,
@@ -70,11 +89,17 @@ const BlackScholes = () => {
 
     try {
       const cppEndpoint = optionType === 'asian' ? '/api/asian-option' : '/api/black-scholes/cpp';
-      const cppRes = await axios.post(`${API_BASE_URL}${cppEndpoint}`, {
+      const cppPromise = axios.post(`${API_BASE_URL}${cppEndpoint}`, {
         ...parsedParams,
         validateWithAnalytical: optionType === 'european'
       });
+      const jsPromise = optionType === 'european'
+        ? axios.post(`${API_BASE_URL}/api/black-scholes/js`, parsedParams)
+        : Promise.resolve(null);
+
+      const [cppRes, jsRes] = await Promise.all([cppPromise, jsPromise]);
       setCppResult(cppRes.data);
+      setJsResult(jsRes?.data ?? null);
 
       axios.post(`${API_BASE_URL}/api/greeks`, parsedParams)
         .then(res => setGreeksResult(res.data))
@@ -95,6 +120,7 @@ const BlackScholes = () => {
         }
       }
       setConvergenceData(convData);
+      setShowAgentHint(true);
 
     } catch (err) {
       console.error('Simulation error:', err);
@@ -102,6 +128,49 @@ const BlackScholes = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleHedgeParamChange = (name, value) => {
+    const parsed =
+      name === 'numTrials' || name === 'rebalanceFreq' || name === 'numSteps'
+        ? parseInt(value, 10)
+        : name === 'txCostPct'
+          ? parseFloat(value)
+          : value;
+    setHedgeParams((prev) => ({ ...prev, [name]: parsed }));
+  };
+
+  const handleRunHedge = async (e) => {
+    if (e) e.preventDefault();
+    setHedgeLoading(true);
+    setHedgeError(null);
+
+    const payload = {
+      S0: parseFloat(params.S0),
+      K: parseFloat(params.K),
+      r: parseFloat(params.r),
+      sigma: parseFloat(params.sigma),
+      T: parseFloat(params.T),
+      isCall: Boolean(params.isCall),
+      numTrials: parseInt(hedgeParams.numTrials, 10),
+      numSteps: parseInt(hedgeParams.numSteps, 10),
+      rebalanceFreq: parseInt(hedgeParams.rebalanceFreq, 10),
+      txCostPct: parseFloat(hedgeParams.txCostPct)
+    };
+
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/simulation/delta-hedge`, payload);
+      setHedgeResult(res.data);
+    } catch (err) {
+      setHedgeError(err.response?.data?.error || err.message || 'Simulation failed');
+    } finally {
+      setHedgeLoading(false);
+    }
+  };
+
+  const handleSubViewChange = (view) => {
+    setResultSubView(view);
+    if (view === 'agent') setShowAgentHint(false);
   };
 
   const handleLoadSimulation = (historyItem) => {
@@ -119,8 +188,26 @@ const BlackScholes = () => {
         setOptionType(historyItem.simulationType.toLowerCase());
       }
       setActiveTab('simulator');
+      setShowHistoryModal(false);
     }
   };
+
+  const openHistoryModal = () => {
+    setShowNavMenu(false);
+    setShowHistoryModal(true);
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (navMenuRef.current && !navMenuRef.current.contains(e.target)) {
+        setShowNavMenu(false);
+      }
+    };
+    if (showNavMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showNavMenu]);
 
   return (
     <div className="monte-carlo-dashboard">
@@ -128,147 +215,163 @@ const BlackScholes = () => {
         <div className="nav-brand">
           <h2>MonteCarloSuite</h2>
         </div>
-        <div className="nav-tabs">
-          <button
-            className={`tab-btn ${activeTab === 'simulator' ? 'active' : ''}`}
-            onClick={() => setActiveTab('simulator')}
-          >
-            📊 Option Simulator
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'delta-hedge' ? 'active' : ''}`}
-            onClick={() => setActiveTab('delta-hedge')}
-          >
-            🛡️ Delta-Hedge Simulator
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'arena' ? 'active' : ''}`}
-            onClick={() => setActiveTab('arena')}
-          >
-            🏆 AI Trading Arena
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'benchmark' ? 'active' : ''}`}
-            onClick={() => setActiveTab('benchmark')}
-          >
-            ⚡ Speed Benchmark
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
-            onClick={() => setActiveTab('history')}
-          >
-            📜 History
-          </button>
+        <div className="nav-right">
+          <div className="nav-tabs">
+            <button
+              className={`tab-btn ${activeTab === 'simulator' ? 'active' : ''}`}
+              onClick={() => setActiveTab('simulator')}
+            >
+              Option Simulator
+            </button>
+            <button
+              className={`tab-btn ${activeTab === 'delta-hedge' ? 'active' : ''}`}
+              onClick={() => setActiveTab('delta-hedge')}
+            >
+              Delta-Hedge Simulator
+            </button>
+          </div>
+          <div className="nav-menu-wrap" ref={navMenuRef}>
+            <button
+              className="nav-menu-btn"
+              onClick={() => setShowNavMenu((prev) => !prev)}
+              aria-label="More options"
+              aria-expanded={showNavMenu}
+            >
+              ⋮
+            </button>
+            {showNavMenu && (
+              <div className="nav-menu-dropdown">
+                <button className="nav-menu-item" onClick={openHistoryModal}>
+                  Simulation History
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </nav>
 
       {error && <div className="error-banner global-error">{error}</div>}
 
+      <ConfigBar
+        activeTab={activeTab}
+        symbol={symbol}
+        onSymbolChange={setSymbol}
+        onMarketDataLoaded={handleMarketDataLoaded}
+        params={params}
+        onParamChange={handleParamChange}
+        optionType={optionType}
+        setOptionType={setOptionType}
+        onRunSimulation={handleRunSimulation}
+        simulationLoading={loading}
+        hedgeParams={hedgeParams}
+        onHedgeParamChange={handleHedgeParamChange}
+        onRunHedge={handleRunHedge}
+        hedgeLoading={hedgeLoading}
+      />
+
       <div className="dashboard-content">
         {activeTab === 'simulator' && (
-          <div className="grid-two-col">
-            <div className="col-left">
-              <TickerLookup onMarketDataLoaded={handleMarketDataLoaded} />
-              <ParameterForm
-                params={params}
-                onChange={handleParamChange}
-                onSubmit={handleRunSimulation}
-                loading={loading}
-                optionType={optionType}
-                setOptionType={setOptionType}
-              />
-            </div>
-            <div className="col-right">
-              {cppResult ? (
-                <>
-                  <div className="subview-pills" style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: '#050811', padding: '6px', borderRadius: '8px', border: '1px solid #1e293b' }}>
-                    <button
-                      className={`tab-btn ${resultSubView === 'results' ? 'active' : ''}`}
-                      onClick={() => setResultSubView('results')}
-                      style={{ fontSize: '0.85rem', padding: '6px 12px' }}
-                    >
-                      📊 Fair Value & Greeks
-                    </button>
-                    <button
-                      className={`tab-btn ${resultSubView === 'paths' ? 'active' : ''}`}
-                      onClick={() => setResultSubView('paths')}
-                      style={{ fontSize: '0.85rem', padding: '6px 12px' }}
-                    >
-                      📈 Trajectories & Accuracy
-                    </button>
-                    <button
-                      className={`tab-btn ${resultSubView === 'agent' ? 'active' : ''}`}
-                      onClick={() => setResultSubView('agent')}
-                      style={{ fontSize: '0.85rem', padding: '6px 12px' }}
-                    >
-                      🤖 AI Risk Analyst
-                    </button>
-                    <button
-                      className={`tab-btn ${resultSubView === 'sensitivity' ? 'active' : ''}`}
-                      onClick={() => setResultSubView('sensitivity')}
-                      style={{ fontSize: '0.85rem', padding: '6px 12px' }}
-                    >
-                      📉 Sensitivity Surface
-                    </button>
+          <div className="single-col">
+            <div className="subview-pills" style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: '#050811', padding: '6px', borderRadius: '8px', border: '1px solid #1e293b', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button
+                  className={`tab-btn ${resultSubView === 'results' ? 'active' : ''}`}
+                  onClick={() => handleSubViewChange('results')}
+                  style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                >
+                  Fair Value & Greeks
+                </button>
+                <button
+                  className={`tab-btn ${resultSubView === 'paths' ? 'active' : ''}`}
+                  onClick={() => handleSubViewChange('paths')}
+                  style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                >
+                  Trajectories & Accuracy
+                </button>
+                <button
+                  className={`tab-btn ${resultSubView === 'agent' ? 'active' : ''}`}
+                  onClick={() => handleSubViewChange('agent')}
+                  style={{ fontSize: '0.85rem', padding: '6px 12px', position: 'relative' }}
+                >
+                  AI Risk Analyst
+                  {showAgentHint && resultSubView !== 'agent' && (
+                    <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#60a5fa', fontWeight: 600 }}>← try this</span>
+                  )}
+                </button>
+                {showAgentHint && resultSubView !== 'agent' && (
+                  <span style={{ fontSize: '0.75rem', color: '#64748b', marginLeft: 'auto', paddingRight: '4px' }}>
+                    Run AI risk audit on these params →
+                  </span>
+                )}
+              </div>
+
+              {resultSubView === 'results' && (
+                cppResult ? (
+                  <ResultsPanel
+                    cppResult={cppResult}
+                    jsResult={jsResult}
+                    greeksResult={greeksResult}
+                    optionType={optionType}
+                  />
+                ) : (
+                  <div className="card placeholder-card">
+                    <h3>Ready to Run Simulation</h3>
+                    <p>Configure parameters in the bar above, then click <strong>Run Simulation</strong>.</p>
                   </div>
-
-                  {resultSubView === 'results' && (
-                    <ResultsPanel
-                      cppResult={cppResult}
-                      greeksResult={greeksResult}
-                      optionType={optionType}
-                    />
-                  )}
-
-                  {resultSubView === 'paths' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                      <PricePathsChart pathsData={pathsData} strikePrice={params.K} />
-                      <ConvergenceChart convergenceData={convergenceData} />
-                    </div>
-                  )}
-
-                  {resultSubView === 'agent' && (
-                    <QuantAgentPanel simulationParams={params} />
-                  )}
-
-                  {resultSubView === 'sensitivity' && (
-                    <SensitivityChart baseParams={params} />
-                  )}
-                </>
-              ) : (
-                <div className="card placeholder-card">
-                  <h3>Ready to Run Simulation</h3>
-                  <p>Configure option parameters on the left or select a stock preset to auto-fill volatility.</p>
-                </div>
+                )
               )}
-            </div>
+
+              {resultSubView === 'paths' && (
+                cppResult ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <PricePathsChart pathsData={pathsData} strikePrice={params.K} />
+                    <ConvergenceChart convergenceData={convergenceData} />
+                  </div>
+                ) : (
+                  <div className="card placeholder-card">
+                    <h3>Run a Simulation First</h3>
+                    <p>Price trajectories and convergence charts appear after you run a simulation.</p>
+                  </div>
+                )
+              )}
+
+              {resultSubView === 'agent' && (
+                cppResult ? (
+                  <QuantAgentPanel simulationParams={params} symbol={symbol} />
+                ) : (
+                  <div className="card placeholder-card">
+                    <h3>Run a Simulation First</h3>
+                    <p>The AI Risk Analyst needs simulation parameters from a completed run.</p>
+                  </div>
+                )
+              )}
+
           </div>
         )}
 
         {activeTab === 'delta-hedge' && (
           <div className="single-col">
-            <DeltaHedgeSimulator baseParams={params} />
-          </div>
-        )}
-
-        {activeTab === 'arena' && (
-          <div className="single-col">
-            <AITradingArena />
-          </div>
-        )}
-
-        {activeTab === 'benchmark' && (
-          <div className="single-col">
-            <PerformanceChart baseParams={params} />
-          </div>
-        )}
-
-        {activeTab === 'history' && (
-          <div className="single-col">
-            <HistoryTable history={history} onLoadSimulation={handleLoadSimulation} />
+            <DeltaHedgeSimulator result={hedgeResult} loading={hedgeLoading} error={hedgeError} />
           </div>
         )}
       </div>
+
+      {showHistoryModal && (
+        <div className="modal-overlay" onClick={() => setShowHistoryModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Simulation History</h3>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowHistoryModal(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <HistoryTable history={history} onLoadSimulation={handleLoadSimulation} />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

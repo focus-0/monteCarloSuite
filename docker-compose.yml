@@ -1,46 +1,83 @@
-services:
-  client:
-    build:
-      context: ./client
-      dockerfile: Dockerfile
-    ports:
-      - "80:80"
-    depends_on:
-      - server
-    networks:
-      - monte-carlo-network
-    restart: unless-stopped
+# Local Docker stack — unified app (API + React) + optional MongoDB.
+#
+# Before first run:
+#   cp .env.example .env
+#   cp server/.env.example server/.env
+#   Align LLM_PROVIDER / GROQ_API_KEY / GEMINI_API_KEY / OLLAMA_URL between both files as needed.
+#
+# Usage:
+#   docker compose up --build              # app only (no Mongo container)
+#   docker compose --profile mongo up --build   # app + MongoDB
+#   open http://localhost:${PORT}
 
-  server:
+services:
+  app:
     build:
-      context: ./server
+      context: .
       dockerfile: Dockerfile
-    environment:
-      - NODE_ENV=production
-      - PORT=5001
-      - MONGO_URI=mongodb://mongo:27017/montecarlo
+      args:
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-}
     ports:
-      - "5001:5001"
-    depends_on:
-      - mongo
+      - "${PORT:-5001}:${PORT:-5001}"
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-5001}
+      MONGO_URI: ${MONGO_URI:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+    env_file:
+      - server/.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - monte-carlo-network
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:' + (process.env.PORT || 5001) + '/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   mongo:
+    profiles: [mongo]
     image: mongo:6
     ports:
-      - "27018:27017"
+      - "${MONGO_HOST_PORT:-27018}:27017"
     volumes:
       - mongo-data:/data/db
-    command: mongod --port 27017
     networks:
       - monte-carlo-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Optional: local Ollama sidecar (uncomment + set LLM_PROVIDER=ollama, OLLAMA_URL=http://ollama:11434)
+  # ollama:
+  #   profiles: [ollama]
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "${OLLAMA_HOST_PORT:-11434}:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   networks:
+  #     - monte-carlo-network
+  #   restart: unless-stopped
 
 networks:
   monte-carlo-network:
     driver: bridge
 
 volumes:
-  mongo-data: 
+  mongo-data:
+  # ollama-data:

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import { API_BASE_URL } from '../apiConfig';
 
 const OFFLINE_PRESETS = {
   AAPL: { symbol: 'AAPL', name: 'Apple Inc.', price: 224.30, volatility: 0.2350 },
@@ -42,7 +43,7 @@ const TickerLookup = ({ onMarketDataLoaded }) => {
     setError(null);
 
     try {
-      const response = await axios.get(`/api/market/${symbol}`);
+      const response = await axios.get(`${API_BASE_URL}/api/market/${symbol}`);
       setData(response.data);
       if (onMarketDataLoaded) {
         onMarketDataLoaded(response.data);

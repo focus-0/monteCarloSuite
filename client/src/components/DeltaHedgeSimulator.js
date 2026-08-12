@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import { API_BASE_URL } from '../apiConfig';
 import { Bar, Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -24,66 +25,7 @@ ChartJS.register(
   Legend
 );
 
-const API_BASE_URL = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
-  ? '' 
-  : (process.env.REACT_APP_API_URL || '');
-
-const DeltaHedgeSimulator = ({ baseParams }) => {
-  const [params, setParams] = useState({
-    S0: baseParams?.S0 || 100,
-    K: baseParams?.K || 100,
-    r: baseParams?.r || 0.05,
-    sigma: baseParams?.sigma || 0.2,
-    T: baseParams?.T || 1,
-    isCall: baseParams?.isCall !== undefined ? baseParams.isCall : true,
-    numTrials: 5000,
-    numSteps: 252,
-    rebalanceFreq: 1,
-    txCostPct: 0.001 // 10 bps
-  });
-
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setParams((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
-    }));
-  };
-
-  const handleRunSimulation = async (e) => {
-    if (e) e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    const payload = {
-      S0: parseFloat(params.S0),
-      K: parseFloat(params.K),
-      r: parseFloat(params.r),
-      sigma: parseFloat(params.sigma),
-      T: parseFloat(params.T),
-      isCall: Boolean(params.isCall),
-      numTrials: parseInt(params.numTrials),
-      numSteps: parseInt(params.numSteps),
-      rebalanceFreq: parseInt(params.rebalanceFreq),
-      txCostPct: parseFloat(params.txCostPct)
-    };
-
-    try {
-      const res = await axios.post(`${API_BASE_URL}/api/simulation/delta-hedge`, payload);
-      setResult(res.data);
-    } catch (err) {
-      console.error('Delta Hedge Simulation Error:', err);
-      setError(err.response?.data?.error || err.message || 'Simulation failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Helper to build P&L histogram chart data
+const DeltaHedgeSimulator = ({ result, loading, error }) => {
   const getHistogramChartData = () => {
     if (!result || !result.pnlDistribution || result.pnlDistribution.length === 0) return null;
 
@@ -123,7 +65,6 @@ const DeltaHedgeSimulator = ({ baseParams }) => {
     };
   };
 
-  // Helper to build Sample Paths Chart data
   const getSamplePathsChartData = () => {
     if (!result || !result.samplePaths || result.samplePaths.length === 0) return null;
 
@@ -148,148 +89,31 @@ const DeltaHedgeSimulator = ({ baseParams }) => {
 
   return (
     <div className="delta-hedge-simulator">
-      <div className="card parameter-form-card" style={{ marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <div>
-            <h3 className="card-title" style={{ margin: 0 }}>🛡️ Discrete Delta-Hedging Simulator</h3>
-            <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '4px 0 0 0' }}>
-              Simulate daily delta-hedging with transaction costs over 10,000 Monte Carlo paths to analyze real-world P&L risk distributions.
-            </p>
-          </div>
-        </div>
-
-        <form onSubmit={handleRunSimulation}>
-          <div className="form-group-row">
-            <div className="form-group">
-              <label>Stock Price (S₀)</label>
-              <input
-                type="number"
-                name="S0"
-                step="0.01"
-                value={params.S0}
-                onChange={handleChange}
-                className="form-control"
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Strike Price (K)</label>
-              <input
-                type="number"
-                name="K"
-                step="0.01"
-                value={params.K}
-                onChange={handleChange}
-                className="form-control"
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Volatility (σ)</label>
-              <input
-                type="number"
-                name="sigma"
-                step="0.001"
-                value={params.sigma}
-                onChange={handleChange}
-                className="form-control"
-                required
-              />
-            </div>
-          </div>
-
-          <div className="form-group-row">
-            <div className="form-group">
-              <label>Risk-Free Rate (r)</label>
-              <input
-                type="number"
-                name="r"
-                step="0.001"
-                value={params.r}
-                onChange={handleChange}
-                className="form-control"
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Time to Expiry (T years)</label>
-              <input
-                type="number"
-                name="T"
-                step="0.01"
-                value={params.T}
-                onChange={handleChange}
-                className="form-control"
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Option Style</label>
-              <select
-                name="isCall"
-                value={params.isCall}
-                onChange={handleChange}
-                className="form-control"
-              >
-                <option value={true}>Call Option</option>
-                <option value={false}>Put Option</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="form-group-row">
-            <div className="form-group">
-              <label>Path Count (N)</label>
-              <select
-                name="numTrials"
-                value={params.numTrials}
-                onChange={handleChange}
-                className="form-control"
-              >
-                <option value={1000}>1,000 Paths</option>
-                <option value={5000}>5,000 Paths</option>
-                <option value={10000}>10,000 Paths (Standard)</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Rebalance Frequency</label>
-              <select
-                name="rebalanceFreq"
-                value={params.rebalanceFreq}
-                onChange={handleChange}
-                className="form-control"
-              >
-                <option value={1}>Daily Rebalance (1 step)</option>
-                <option value={5}>Weekly Rebalance (5 steps)</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Transaction Fee (bps)</label>
-              <select
-                name="txCostPct"
-                value={params.txCostPct}
-                onChange={handleChange}
-                className="form-control"
-              >
-                <option value={0.0}>0 bps (Zero Friction)</option>
-                <option value={0.0005}>5 bps (0.05%)</option>
-                <option value={0.001}>10 bps (0.10% Standard)</option>
-                <option value={0.0025}>25 bps (0.25% High Friction)</option>
-              </select>
-            </div>
-          </div>
-
-          <button type="submit" className="btn btn-primary btn-submit" disabled={loading} style={{ width: '100%', marginTop: '1rem' }}>
-            {loading ? '⚡ Simulating 10,000 Delta-Hedged Paths in C++...' : '▶ Run Delta-Hedging Simulation'}
-          </button>
-        </form>
+      <div className="card" style={{ marginBottom: '1.5rem', padding: '16px 20px' }}>
+        <h3 className="card-title" style={{ margin: 0 }}>Discrete Delta-Hedging Simulator</h3>
+        <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '6px 0 0 0' }}>
+          Daily delta-hedging with transaction costs over Monte Carlo paths — configure parameters in the bar above and run.
+        </p>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
 
-      {result && result.summaryStatistics && (
+      {!result && !loading && (
+        <div className="card placeholder-card">
+          <h3>Ready to Run Delta-Hedge Simulation</h3>
+          <p>Set parameters in the config bar above and click <strong>Run Hedge</strong>.</p>
+        </div>
+      )}
+
+      {loading && (
+        <div className="card placeholder-card">
+          <div className="spinner" style={{ margin: '0 auto 12px' }} />
+          <p style={{ textAlign: 'center', color: '#60a5fa' }}>Simulating delta-hedged paths in C++…</p>
+        </div>
+      )}
+
+      {result && result.summaryStatistics && !loading && (
         <div className="results-container" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {/* Summary Stat Cards */}
           <div className="grid-four-col" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
             <div className="card stat-card" style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '1rem', borderRadius: '8px' }}>
               <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Mean Hedge P&L</div>
@@ -325,14 +149,13 @@ const DeltaHedgeSimulator = ({ baseParams }) => {
           </div>
 
           <div style={{ display: 'flex', gap: '1rem', color: '#94a3b8', fontSize: '0.85rem' }}>
-            <span>⚡ Executed {result.numPaths?.toLocaleString()} paths ({result.numSteps} steps) in <strong>{result.executionTimeMs?.toFixed(2)} ms</strong> in multithreaded C++</span>
+            <span>Executed {result.numPaths?.toLocaleString()} paths ({result.numSteps} steps) in <strong>{result.executionTimeMs?.toFixed(2)} ms</strong> in multithreaded C++</span>
             <span>• Average Tx Costs Paid: <strong>${result.summaryStatistics.avgTxCosts?.toFixed(4)}</strong></span>
           </div>
 
-          {/* Histogram Chart */}
           {histogramData && (
             <div className="card chart-card" style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '1.5rem', borderRadius: '8px' }}>
-              <h4 className="card-title">Hedge P&L Risk Distribution (10,000 Simulated Outcomes)</h4>
+              <h4 className="card-title">Hedge P&L Risk Distribution</h4>
               <div className="chart-container" style={{ height: '320px' }}>
                 <Bar
                   data={histogramData}
@@ -350,7 +173,6 @@ const DeltaHedgeSimulator = ({ baseParams }) => {
             </div>
           )}
 
-          {/* Sample Paths Chart */}
           {samplePathsData && (
             <div className="card chart-card" style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '1.5rem', borderRadius: '8px' }}>
               <h4 className="card-title">Sample Paths: Cumulative Hedging Tracking Error over Time</h4>
