@@ -10,12 +10,14 @@ async function runTradingArena(params = {}) {
     symbol = 'AAPL',
     capital = 100000,
     strategyMode = 'ai_agent', // 'ai_agent' | 'delta_hedge' | 'buy_hold'
+    timeWindow = 30, // 30 mins fast window vs 390 mins full day
     txCostPct = 0.001 // 10 bps
   } = params;
 
   const startT = Date.now();
-  const marketData = generateIntradaySeries(symbol);
-  const series = marketData.series;
+  const fullMarketData = generateIntradaySeries(symbol);
+  const targetWindow = Math.min(Math.max(10, parseInt(timeWindow)), 390);
+  const series = fullMarketData.series.slice(0, targetWindow);
 
   let cash = Number(capital);
   let sharesHeld = 0;
@@ -220,7 +222,7 @@ async function runTradingArena(params = {}) {
 
   return {
     symbol,
-    name: marketData.name,
+    name: fullMarketData.name,
     capital,
     strategyMode,
     executionTimeMs: execMs,

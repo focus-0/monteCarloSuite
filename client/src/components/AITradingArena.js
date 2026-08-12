@@ -22,7 +22,8 @@ const AITradingArena = () => {
   const [params, setParams] = useState({
     symbol: 'AAPL',
     capital: 100000,
-    strategyMode: 'ai_agent'
+    strategyMode: 'ai_agent',
+    timeWindow: 30
   });
 
   const [result, setResult] = useState(null);
@@ -43,7 +44,8 @@ const AITradingArena = () => {
       const res = await axios.post(`${API_BASE_URL}/api/mft/arena/run`, {
         symbol: params.symbol,
         capital: parseFloat(params.capital),
-        strategyMode: params.strategyMode
+        strategyMode: params.strategyMode,
+        timeWindow: parseInt(params.timeWindow)
       });
       setResult(res.data);
     } catch (err) {
@@ -57,8 +59,9 @@ const AITradingArena = () => {
   const getNavChartData = () => {
     if (!result || !result.navCurve || result.navCurve.length === 0) return null;
 
-    // Sample every 10th minute for smooth chart rendering
-    const sampled = result.navCurve.filter((_, idx) => idx % 10 === 0 || idx === result.navCurve.length - 1);
+    // Sample points appropriately for chart display
+    const sampleInterval = result.navCurve.length > 50 ? 5 : 1;
+    const sampled = result.navCurve.filter((_, idx) => idx % sampleInterval === 0 || idx === result.navCurve.length - 1);
 
     return {
       labels: sampled.map((pt) => pt.time),
@@ -97,7 +100,7 @@ const AITradingArena = () => {
           <div>
             <h3 className="card-title" style={{ margin: 0 }}>🏆 MFT Market Replay & AI Agent Trading Arena</h3>
             <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '4px 0 0 0' }}>
-              Simulate an entire 390-minute intraday trading session (9:30 AM - 4:00 PM) where an autonomous AI Agent trades & hedges in real-time.
+              Simulate an intraday trading session (30-minute Power Hour or Full 390-minute Trading Day) where an autonomous AI Agent trades & hedges in real-time.
             </p>
           </div>
         </div>
@@ -114,7 +117,14 @@ const AITradingArena = () => {
               </select>
             </div>
             <div className="form-group">
-              <label>Starting Portfolio Capital ($)</label>
+              <label>Trading Window</label>
+              <select name="timeWindow" value={params.timeWindow} onChange={handleChange} className="form-control">
+                <option value={30}>⚡ 30-Minute Power Hour Window (Fast 30 Mins)</option>
+                <option value={390}>📈 Full Trading Day (390 Mins)</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Starting Capital ($)</label>
               <input
                 type="number"
                 name="capital"
@@ -125,7 +135,7 @@ const AITradingArena = () => {
               />
             </div>
             <div className="form-group">
-              <label>Trading Strategy Mode</label>
+              <label>Strategy Mode</label>
               <select name="strategyMode" value={params.strategyMode} onChange={handleChange} className="form-control">
                 <option value="ai_agent">🤖 Autonomous AI Agent (Greeks + News Trigger)</option>
                 <option value="delta_hedge">🛡️ Rules-Based Delta Hedge</option>
@@ -135,7 +145,7 @@ const AITradingArena = () => {
           </div>
 
           <button type="submit" className="btn btn-primary btn-submit" disabled={loading} style={{ width: '100%', marginTop: '1rem' }}>
-            {loading ? '⚡ Simulating 390 Trading Minutes in Sub-2ms C++ Engine...' : '▶ Run 390-Minute AI Trading Arena'}
+            {loading ? `⚡ Simulating ${params.timeWindow}-Minute Session in Sub-2ms C++ Engine...` : `▶ Run ${params.timeWindow}-Minute AI Trading Arena`}
           </button>
         </form>
       </div>
