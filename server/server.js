@@ -17,13 +17,13 @@ const app = express();
 // Set security headers
 app.use(helmet());
 
-// Rate limiting
+// Rate limiting - relaxed for high-frequency simulation runs and benchmarks
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-  message: 'Too many requests from this IP, please try again after 15 minutes'
+  max: process.env.NODE_ENV === 'production' ? 1000 : 10000, // 10,000 requests per 15 mins for local testing
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
 });
 
 // Apply rate limiting to all routes
