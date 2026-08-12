@@ -6,9 +6,13 @@
 # Testing
 /coverage
 .env
-# Production
+
+# Production & Build Artifacts
 build
 client/build
+server/cpp/build/
+server/cpp/monte_carlo
+*.o
 
 # Misc
 .DS_Store

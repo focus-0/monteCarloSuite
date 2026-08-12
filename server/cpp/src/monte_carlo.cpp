@@ -311,6 +311,171 @@ void monte_carlo_black_scholes_mt(double S0, double K, double r, double sigma,
     upper = discounted_mean + margin_of_error;
 }
 
+// Multi-threaded Asian Option Pricing (arithmetic average daily steps)
+void monte_carlo_asian_option_mt(double S0, double K, double r, double sigma,
+                                  double T, bool isCall, int numTrials, int numSteps, int num_threads,
+                                  double &price, double &lower, double &upper)
+{
+    if (numSteps <= 0) numSteps = 252; // Default to daily steps for 1 year
+    if (num_threads <= 0) {
+        num_threads = std::thread::hardware_concurrency();
+        if (num_threads == 0) num_threads = 4;
+    }
+    num_threads = std::min(num_threads, numTrials);
+
+    int trials_per_thread = numTrials / num_threads;
+    int remaining_trials = numTrials % num_threads;
+
+    const double dt = T / numSteps;
+    const double drift = (r - 0.5 * sigma * sigma) * dt;
+    const double vol_sqrt_dt = sigma * sqrt(dt);
+    const double discount = exp(-r * T);
+
+    struct ThreadResult {
+        double sum;
+        double sum_squared;
+        int count;
+    };
+
+    std::vector<ThreadResult> thread_results(num_threads, {0.0, 0.0, 0});
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+
+    auto thread_func = [&](int thread_id, int count) {
+        double local_sum = 0.0;
+        double local_sum_squared = 0.0;
+
+        std::mt19937_64 gen(std::chrono::high_resolution_clock::now().time_since_epoch().count() + thread_id * 1000);
+        std::normal_distribution<> norm_dist(0.0, 1.0);
+
+        for (int i = 0; i < count; ++i) {
+            double current_S = S0;
+            double path_sum = current_S;
+
+            for (int step = 0; step < numSteps; ++step) {
+                const double z = norm_dist(gen);
+                current_S *= exp(drift + vol_sqrt_dt * z);
+                path_sum += current_S;
+            }
+
+            double arithmetic_avg = path_sum / (numSteps + 1);
+            double payoff = calculate_payoff(arithmetic_avg, K, isCall);
+
+            local_sum += payoff;
+            local_sum_squared += payoff * payoff;
+        }
+
+        thread_results[thread_id] = {local_sum, local_sum_squared, count};
+    };
+
+    int start_idx = 0;
+    for (int i = 0; i < num_threads; ++i) {
+        int count = trials_per_thread + (i < remaining_trials ? 1 : 0);
+        threads.emplace_back(thread_func, i, count);
+        start_idx += count;
+    }
+
+    for (auto &t : threads) {
+        t.join();
+    }
+
+    double total_sum = 0.0;
+    double total_sum_squared = 0.0;
+    int total_count = 0;
+
+    for (const auto &res : thread_results) {
+        total_sum += res.sum;
+        total_sum_squared += res.sum_squared;
+        total_count += res.count;
+    }
+
+    double mean = total_sum / total_count;
+    double discounted_mean = mean * discount;
+    double variance = (total_sum_squared / total_count) - (mean * mean);
+    if (variance < 0.0) variance = 0.0;
+    double std_dev = sqrt(variance);
+    double margin_of_error = 1.96 * (std_dev / sqrt(total_count)) * discount;
+
+    price = discounted_mean;
+    lower = discounted_mean - margin_of_error;
+    upper = discounted_mean + margin_of_error;
+}
+
+// Calculate Finite-Difference Greeks (Delta, Gamma, Vega, Theta, Rho)
+struct GreeksResult {
+    double delta;
+    double gamma;
+    double vega;
+    double theta;
+    double rho;
+    double basePrice;
+};
+
+GreeksResult calculate_greeks_mt(double S0, double K, double r, double sigma,
+                                double T, bool isCall, int numTrials, int num_threads)
+{
+    double base_price, base_l, base_u;
+    monte_carlo_black_scholes_mt(S0, K, r, sigma, T, isCall, numTrials, num_threads, base_price, base_l, base_u);
+
+    // Delta & Gamma (Spot bump: h_S = 0.01 * S0)
+    double h_S = 0.01 * S0;
+    double price_S_up, l1, u1, price_S_down, l2, u2;
+    monte_carlo_black_scholes_mt(S0 + h_S, K, r, sigma, T, isCall, numTrials, num_threads, price_S_up, l1, u1);
+    monte_carlo_black_scholes_mt(S0 - h_S, K, r, sigma, T, isCall, numTrials, num_threads, price_S_down, l2, u2);
+
+    double delta = (price_S_up - price_S_down) / (2.0 * h_S);
+    double gamma = (price_S_up - 2.0 * base_price + price_S_down) / (h_S * h_S);
+
+    // Vega (Vol bump: h_vol = 0.01)
+    double h_vol = 0.01;
+    double price_vol_up, l3, u3, price_vol_down, l4, u4;
+    monte_carlo_black_scholes_mt(S0, K, r, sigma + h_vol, T, isCall, numTrials, num_threads, price_vol_up, l3, u3);
+    monte_carlo_black_scholes_mt(S0, K, r, std::max(0.001, sigma - h_vol), T, isCall, numTrials, num_threads, price_vol_down, l4, u4);
+
+    double vega = (price_vol_up - price_vol_down) / (2.0 * h_vol);
+
+    // Theta (Time bump: h_T = 1.0 / 365.0)
+    double h_T = 1.0 / 365.0;
+    double price_T_down, l5, u5;
+    monte_carlo_black_scholes_mt(S0, K, r, sigma, std::max(0.001, T - h_T), isCall, numTrials, num_threads, price_T_down, l5, u5);
+
+    double theta = (price_T_down - base_price) / h_T; // Annualized theta
+
+    // Rho (Interest rate bump: h_r = 0.001)
+    double h_r = 0.001;
+    double price_r_up, l6, u6, price_r_down, l7, u7;
+    monte_carlo_black_scholes_mt(S0, K, r + h_r, sigma, T, isCall, numTrials, num_threads, price_r_up, l6, u6);
+    monte_carlo_black_scholes_mt(S0, K, std::max(0.0, r - h_r), sigma, T, isCall, numTrials, num_threads, price_r_down, l7, u7);
+
+    double rho = (price_r_up - price_r_down) / (2.0 * h_r);
+
+    return {delta, gamma, vega, theta, rho, base_price};
+}
+
+// Generate Sample Price Paths for Visualizer
+std::vector<std::vector<double>> generate_price_paths(double S0, double r, double sigma, double T, int numPaths = 50, int numSteps = 100)
+{
+    std::vector<std::vector<double>> paths(numPaths, std::vector<double>(numSteps + 1, S0));
+    double dt = T / numSteps;
+    double drift = (r - 0.5 * sigma * sigma) * dt;
+    double vol_sqrt_dt = sigma * sqrt(dt);
+
+    std::mt19937_64 gen(12345); // Fixed seed for reproducible paths
+    std::normal_distribution<> norm_dist(0.0, 1.0);
+
+    for (int p = 0; p < numPaths; ++p) {
+        double S = S0;
+        paths[p][0] = S0;
+        for (int step = 1; step <= numSteps; ++step) {
+            double z = norm_dist(gen);
+            S *= exp(drift + vol_sqrt_dt * z);
+            paths[p][step] = S;
+        }
+    }
+
+    return paths;
+}
+
 // Function to run multiple benchmark iterations
 std::vector<BenchmarkResult> run_benchmark(double S0, double K, double r, double sigma,
                                            double T, bool isCall, int numTrials,
@@ -388,8 +553,8 @@ int main(int argc, char *argv[])
 {
     if (argc < 9)
     {
-        std::cerr << "Usage: " << argv[0] << " <S0> <K> <r> <sigma> <T> <isCall> <numTrials> <benchmark_mode> [threads] [iterations]" << std::endl;
-        std::cerr << "  benchmark_mode: 0 for single run, 1 for benchmark with multiple iterations" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <S0> <K> <r> <sigma> <T> <isCall> <numTrials> <benchmark_mode> [threads] [iterations/numSteps]" << std::endl;
+        std::cerr << "  benchmark_mode: 0 = European single run, 1 = benchmark, 2 = Asian option, 3 = Greeks, 4 = Price paths" << std::endl;
         return 1;
     }
 
@@ -406,69 +571,109 @@ int main(int argc, char *argv[])
         int benchmark_mode = std::stoi(argv[8]);
 
         // Validate inputs with improved error messages
-        if (S0 <= 0.0)
-        {
-            throw std::invalid_argument("Stock price (S0) must be positive");
-        }
-        if (K <= 0.0)
-        {
-            throw std::invalid_argument("Strike price (K) must be positive");
-        }
-        if (sigma <= 0.0)
-        {
-            throw std::invalid_argument("Volatility (sigma) must be positive");
-        }
-        if (T <= 0.0)
-        {
-            throw std::invalid_argument("Time to maturity (T) must be positive");
-        }
-        if (numTrials <= 0)
-        {
-            throw std::invalid_argument("Number of trials must be positive");
+        if (S0 <= 0.0) throw std::invalid_argument("Stock price (S0) must be positive");
+        if (K <= 0.0) throw std::invalid_argument("Strike price (K) must be positive");
+        if (sigma <= 0.0) throw std::invalid_argument("Volatility (sigma) must be positive");
+        if (T <= 0.0) throw std::invalid_argument("Time to maturity (T) must be positive");
+        if (numTrials <= 0) throw std::invalid_argument("Number of trials must be positive");
+
+        int threads = 0;
+        if (argc > 9) {
+            threads = std::stoi(argv[9]);
         }
 
         if (benchmark_mode == 0)
         {
-            // Single run mode
-            int threads = 0;
-            if (argc > 9)
-            {
-                threads = std::stoi(argv[9]);
-            }
-
+            // European Single Run Mode
+            auto start_t = std::chrono::high_resolution_clock::now();
             double price, lower, upper;
             monte_carlo_black_scholes_mt(S0, K, r, sigma, T, isCall, numTrials, threads, price, lower, upper);
+            auto end_t = std::chrono::high_resolution_clock::now();
+            double exec_ms = std::chrono::duration<double, std::milli>(end_t - start_t).count();
 
-            // Output simplified JSON-formatted result
-            std::cout << "{\"optionPrice\":" << std::fixed << std::setprecision(6) << price
+            std::cout << "{\"optionType\":\"european\",\"executionTimeMs\":" << std::fixed << std::setprecision(3) << exec_ms
+                      << ",\"optionPrice\":" << std::fixed << std::setprecision(6) << price
                       << ",\"confidence\":{\"lower\":" << lower
                       << ",\"upper\":" << upper
                       << "},\"threadsUsed\":" << threads << "}";
         }
-        else
+        else if (benchmark_mode == 2)
         {
-            // Benchmark mode
-            int threads = 0;
-            int iterations = 5; // Default to 5 iterations
-
-            if (argc > 9)
-            {
-                threads = std::stoi(argv[9]);
+            // Asian Option Mode
+            int numSteps = 252;
+            if (argc > 10) {
+                numSteps = std::stoi(argv[10]);
             }
 
-            if (argc > 10)
-            {
+            auto start_t = std::chrono::high_resolution_clock::now();
+            double price, lower, upper;
+            monte_carlo_asian_option_mt(S0, K, r, sigma, T, isCall, numTrials, numSteps, threads, price, lower, upper);
+            auto end_t = std::chrono::high_resolution_clock::now();
+            double exec_ms = std::chrono::duration<double, std::milli>(end_t - start_t).count();
+
+            std::cout << "{\"optionType\":\"asian\",\"executionTimeMs\":" << std::fixed << std::setprecision(3) << exec_ms
+                      << ",\"numSteps\":" << numSteps
+                      << ",\"optionPrice\":" << std::fixed << std::setprecision(6) << price
+                      << ",\"confidence\":{\"lower\":" << lower
+                      << ",\"upper\":" << upper
+                      << "},\"threadsUsed\":" << threads << "}";
+        }
+        else if (benchmark_mode == 3)
+        {
+            // Greeks Calculation Mode
+            auto start_t = std::chrono::high_resolution_clock::now();
+            GreeksResult greeks = calculate_greeks_mt(S0, K, r, sigma, T, isCall, numTrials, threads);
+            auto end_t = std::chrono::high_resolution_clock::now();
+            double exec_ms = std::chrono::duration<double, std::milli>(end_t - start_t).count();
+
+            std::cout << "{\"executionTimeMs\":" << std::fixed << std::setprecision(3) << exec_ms
+                      << ",\"optionPrice\":" << std::fixed << std::setprecision(6) << greeks.basePrice
+                      << ",\"greeks\":{\"delta\":" << greeks.delta
+                      << ",\"gamma\":" << greeks.gamma
+                      << ",\"vega\":" << greeks.vega
+                      << ",\"theta\":" << greeks.theta
+                      << ",\"rho\":" << greeks.rho
+                      << "},\"threadsUsed\":" << threads << "}";
+        }
+        else if (benchmark_mode == 4)
+        {
+            // Price Paths Generation Mode
+            int numPaths = 50;
+            int numSteps = 100;
+            if (argc > 9) numPaths = std::stoi(argv[9]);
+            if (argc > 10) numSteps = std::stoi(argv[10]);
+
+            auto start_t = std::chrono::high_resolution_clock::now();
+            auto paths = generate_price_paths(S0, r, sigma, T, numPaths, numSteps);
+            auto end_t = std::chrono::high_resolution_clock::now();
+            double exec_ms = std::chrono::duration<double, std::milli>(end_t - start_t).count();
+
+            std::cout << "{\"executionTimeMs\":" << std::fixed << std::setprecision(3) << exec_ms
+                      << ",\"numPaths\":" << numPaths << ",\"numSteps\":" << numSteps << ",\"paths\":[";
+            for (size_t i = 0; i < paths.size(); ++i) {
+                std::cout << "[";
+                for (size_t j = 0; j < paths[i].size(); ++j) {
+                    std::cout << std::fixed << std::setprecision(4) << paths[i][j];
+                    if (j < paths[i].size() - 1) std::cout << ",";
+                }
+                std::cout << "]";
+                if (i < paths.size() - 1) std::cout << ",";
+            }
+            std::cout << "]}";
+        }
+        else
+        {
+            // Benchmark mode (mode = 1)
+            int iterations = 5;
+            if (argc > 10) {
                 iterations = std::stoi(argv[10]);
             }
 
-            // Run benchmark
             auto results = run_benchmark(S0, K, r, sigma, T, isCall, numTrials, threads, iterations);
 
-            // Calculate statistics
             double min_time, max_time, avg_time, median_time;
             calculate_stats(results, min_time, max_time, avg_time, median_time);
 
-            // Output simplified JSON-formatted benchmark results
             std::cout << "{\"statistics\":{\"min\":" << std::fixed << std::setprecision(3) << min_time
                       << ",\"max\":" << max_time
                       << ",\"avg\":" << avg_time
@@ -498,7 +703,6 @@ int main(int argc, char *argv[])
     }
     catch (const std::invalid_argument &e)
     {
-        // Return validation errors as JSON for better client integration
         std::cerr << "Error: " << e.what() << std::endl;
         std::cout << "{\"error\":\"" << e.what() << "\"}";
         return 1;
