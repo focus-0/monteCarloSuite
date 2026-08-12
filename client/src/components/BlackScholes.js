@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import ParameterForm from './ParameterForm';
 import TickerLookup from './TickerLookup';
@@ -10,7 +10,9 @@ import PricePathsChart from './charts/PricePathsChart';
 import SensitivityChart from './charts/SensitivityChart';
 import QuantAgentPanel from './QuantAgentPanel';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+const API_BASE_URL = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
+  ? '' 
+  : (process.env.REACT_APP_API_URL || '');
 
 const BlackScholes = () => {
   const [params, setParams] = useState({
@@ -80,10 +82,7 @@ const BlackScholes = () => {
         .then(res => setPathsData(res.data))
         .catch(err => console.error('Paths fetch failed:', err));
 
-      axios.post(`${API_BASE_URL}/api/black-scholes/js`, parsedParams)
-        .then(res => setJsResult(res.data))
-        .catch(err => console.error('JS benchmark failed:', err));
-
+      // Asynchronous convergence calculation using C++
       const trialSteps = [1000, 5000, 10000, 50000, 100000];
       const convData = [];
       for (const t of trialSteps) {
@@ -103,6 +102,32 @@ const BlackScholes = () => {
       setLoading(false);
     }
   };
+
+  // Run single-threaded JS benchmark strictly when user opens the Speed Benchmark tab
+  const handleRunJsBenchmark = async () => {
+    if (jsResult) return; // Already fetched for current params
+    try {
+      const parsedParams = {
+        S0: parseFloat(params.S0),
+        K: parseFloat(params.K),
+        r: parseFloat(params.r),
+        sigma: parseFloat(params.sigma),
+        T: parseFloat(params.T),
+        numTrials: parseInt(params.numTrials),
+        isCall: Boolean(params.isCall)
+      };
+      const res = await axios.post(`${API_BASE_URL}/api/black-scholes/js`, parsedParams);
+      setJsResult(res.data);
+    } catch (err) {
+      console.error('JS Benchmark execution failed:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'benchmark') {
+      handleRunJsBenchmark();
+    }
+  }, [activeTab]);
 
   const handleLoadSimulation = (historyItem) => {
     if (historyItem.parameters) {

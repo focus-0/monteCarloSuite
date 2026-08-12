@@ -67,7 +67,7 @@ const PerformanceChart = ({ cppTimeMs, jsTimeMs, trials }) => {
     <div className="card chart-card">
       <div className="card-header-row">
         <h3 className="card-title">Execution Speed Benchmark</h3>
-        <span className="badge badge-speedup">⚡ C++ is {speedup}x Faster</span>
+        <span className="badge badge-speedup">C++ is {speedup}x Faster</span>
       </div>
       <div className="chart-container">
         <Bar data={data} options={options} />
