@@ -141,10 +141,43 @@ function generatePricePaths(params) {
   return runCppProcess(args);
 }
 
+function simulateDeltaHedging(params) {
+  const {
+    S0 = 100,
+    K = 100,
+    r = 0.05,
+    sigma = 0.2,
+    T = 1,
+    isCall = true,
+    numTrials = 10000,
+    numSteps = 252,
+    rebalanceFreq = 1,
+    txCostPct = 0.001,
+    threads = 0
+  } = params;
+
+  const args = [
+    Number(S0).toString(),
+    Number(K).toString(),
+    Number(r).toString(),
+    Number(sigma).toString(),
+    Number(T).toString(),
+    parseBool(isCall) ? '1' : '0',
+    Math.floor(Number(numTrials)).toString(),
+    '5', // Mode 5 = Delta-Hedging Simulator
+    Number(threads).toString(),
+    Math.floor(Number(numSteps)).toString(),
+    Math.floor(Number(rebalanceFreq)).toString(),
+    Number(txCostPct).toString()
+  ];
+  return runCppProcess(args);
+}
+
 module.exports = {
   monteCarloBlackScholes,
   monteCarloAsianOption,
   calculateGreeks,
   generatePricePaths,
+  simulateDeltaHedging,
   isExecutableAvailable
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
 import ParameterForm from './ParameterForm';
 import TickerLookup from './TickerLookup';
@@ -9,6 +9,7 @@ import ConvergenceChart from './charts/ConvergenceChart';
 import PricePathsChart from './charts/PricePathsChart';
 import SensitivityChart from './charts/SensitivityChart';
 import QuantAgentPanel from './QuantAgentPanel';
+import DeltaHedgeSimulator from './DeltaHedgeSimulator';
 
 const API_BASE_URL = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
   ? '' 
@@ -27,13 +28,13 @@ const BlackScholes = () => {
 
   const [optionType, setOptionType] = useState('european');
   const [activeTab, setActiveTab] = useState('simulator');
+  const [resultSubView, setResultSubView] = useState('results');
 
   const [cppResult, setCppResult] = useState(null);
-  const [jsResult, setJsResult] = useState(null);
   const [greeksResult, setGreeksResult] = useState(null);
   const [pathsData, setPathsData] = useState(null);
   const [convergenceData, setConvergenceData] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [history] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -82,7 +83,6 @@ const BlackScholes = () => {
         .then(res => setPathsData(res.data))
         .catch(err => console.error('Paths fetch failed:', err));
 
-      // Asynchronous convergence calculation using C++
       const trialSteps = [1000, 5000, 10000, 50000, 100000];
       const convData = [];
       for (const t of trialSteps) {
@@ -102,32 +102,6 @@ const BlackScholes = () => {
       setLoading(false);
     }
   };
-
-  // Run single-threaded JS benchmark strictly when user opens the Speed Benchmark tab
-  const handleRunJsBenchmark = async () => {
-    if (jsResult) return; // Already fetched for current params
-    try {
-      const parsedParams = {
-        S0: parseFloat(params.S0),
-        K: parseFloat(params.K),
-        r: parseFloat(params.r),
-        sigma: parseFloat(params.sigma),
-        T: parseFloat(params.T),
-        numTrials: parseInt(params.numTrials),
-        isCall: Boolean(params.isCall)
-      };
-      const res = await axios.post(`${API_BASE_URL}/api/black-scholes/js`, parsedParams);
-      setJsResult(res.data);
-    } catch (err) {
-      console.error('JS Benchmark execution failed:', err);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'benchmark') {
-      handleRunJsBenchmark();
-    }
-  }, [activeTab]);
 
   const handleLoadSimulation = (historyItem) => {
     if (historyItem.parameters) {
@@ -158,31 +132,25 @@ const BlackScholes = () => {
             className={`tab-btn ${activeTab === 'simulator' ? 'active' : ''}`}
             onClick={() => setActiveTab('simulator')}
           >
-            Option Simulator
+            📊 Option Simulator
           </button>
           <button
-            className={`tab-btn ${activeTab === 'agent' ? 'active' : ''}`}
-            onClick={() => setActiveTab('agent')}
+            className={`tab-btn ${activeTab === 'delta-hedge' ? 'active' : ''}`}
+            onClick={() => setActiveTab('delta-hedge')}
           >
-            AI Risk Analyst
+            🛡️ Delta-Hedge Simulator
           </button>
           <button
             className={`tab-btn ${activeTab === 'benchmark' ? 'active' : ''}`}
             onClick={() => setActiveTab('benchmark')}
           >
-            Speed Benchmark
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'paths' ? 'active' : ''}`}
-            onClick={() => setActiveTab('paths')}
-          >
-            Price Trajectories
+            ⚡ Speed Benchmark
           </button>
           <button
             className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
             onClick={() => setActiveTab('history')}
           >
-            History
+            📜 History
           </button>
         </div>
       </nav>
@@ -206,15 +174,59 @@ const BlackScholes = () => {
             <div className="col-right">
               {cppResult ? (
                 <>
-                  <ResultsPanel
-                    cppResult={cppResult}
-                    jsResult={jsResult}
-                    greeksResult={greeksResult}
-                    optionType={optionType}
-                  />
-                  <QuantAgentPanel simulationParams={params} />
-                  <ConvergenceChart convergenceData={convergenceData} />
-                  <SensitivityChart baseParams={params} />
+                  <div className="subview-pills" style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: '#050811', padding: '6px', borderRadius: '8px', border: '1px solid #1e293b' }}>
+                    <button
+                      className={`tab-btn ${resultSubView === 'results' ? 'active' : ''}`}
+                      onClick={() => setResultSubView('results')}
+                      style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                    >
+                      📊 Fair Value & Greeks
+                    </button>
+                    <button
+                      className={`tab-btn ${resultSubView === 'paths' ? 'active' : ''}`}
+                      onClick={() => setResultSubView('paths')}
+                      style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                    >
+                      📈 Trajectories & Accuracy
+                    </button>
+                    <button
+                      className={`tab-btn ${resultSubView === 'agent' ? 'active' : ''}`}
+                      onClick={() => setResultSubView('agent')}
+                      style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                    >
+                      🤖 AI Risk Analyst
+                    </button>
+                    <button
+                      className={`tab-btn ${resultSubView === 'sensitivity' ? 'active' : ''}`}
+                      onClick={() => setResultSubView('sensitivity')}
+                      style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                    >
+                      📉 Sensitivity Surface
+                    </button>
+                  </div>
+
+                  {resultSubView === 'results' && (
+                    <ResultsPanel
+                      cppResult={cppResult}
+                      greeksResult={greeksResult}
+                      optionType={optionType}
+                    />
+                  )}
+
+                  {resultSubView === 'paths' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      <PricePathsChart pathsData={pathsData} strikePrice={params.K} />
+                      <ConvergenceChart convergenceData={convergenceData} />
+                    </div>
+                  )}
+
+                  {resultSubView === 'agent' && (
+                    <QuantAgentPanel simulationParams={params} />
+                  )}
+
+                  {resultSubView === 'sensitivity' && (
+                    <SensitivityChart baseParams={params} />
+                  )}
                 </>
               ) : (
                 <div className="card placeholder-card">
@@ -226,25 +238,15 @@ const BlackScholes = () => {
           </div>
         )}
 
-        {activeTab === 'agent' && (
+        {activeTab === 'delta-hedge' && (
           <div className="single-col">
-            <QuantAgentPanel simulationParams={params} />
+            <DeltaHedgeSimulator baseParams={params} />
           </div>
         )}
 
         {activeTab === 'benchmark' && (
           <div className="single-col">
-            <PerformanceChart
-              cppTimeMs={cppResult?.executionTimeMs}
-              jsTimeMs={jsResult?.executionTimeMs}
-              trials={params.numTrials}
-            />
-          </div>
-        )}
-
-        {activeTab === 'paths' && (
-          <div className="single-col">
-            <PricePathsChart pathsData={pathsData} strikePrice={params.K} />
+            <PerformanceChart baseParams={params} />
           </div>
         )}
 

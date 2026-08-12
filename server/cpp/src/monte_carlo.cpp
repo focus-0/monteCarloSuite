@@ -414,42 +414,142 @@ struct GreeksResult {
 GreeksResult calculate_greeks_mt(double S0, double K, double r, double sigma,
                                 double T, bool isCall, int numTrials, int num_threads)
 {
-    double base_price, base_l, base_u;
-    monte_carlo_black_scholes_mt(S0, K, r, sigma, T, isCall, numTrials, num_threads, base_price, base_l, base_u);
+    if (num_threads <= 0) {
+        num_threads = std::thread::hardware_concurrency();
+        if (num_threads == 0) num_threads = 4;
+    }
+    num_threads = std::min(num_threads, numTrials);
 
-    // Delta & Gamma (Spot bump: h_S = 0.01 * S0)
-    double h_S = 0.01 * S0;
-    double price_S_up, l1, u1, price_S_down, l2, u2;
-    monte_carlo_black_scholes_mt(S0 + h_S, K, r, sigma, T, isCall, numTrials, num_threads, price_S_up, l1, u1);
-    monte_carlo_black_scholes_mt(S0 - h_S, K, r, sigma, T, isCall, numTrials, num_threads, price_S_down, l2, u2);
+    int trials_per_thread = numTrials / num_threads;
+    int remaining_trials = numTrials % num_threads;
+
+    const double h_S = 0.005 * S0;       // 0.5% spot bump
+    const double h_vol = 0.005;          // 50 bps vol bump
+    const double h_T = 1.0 / 365.0;      // 1 day time decay bump
+    const double h_r = 0.0005;           // 5 bps interest rate bump
+
+    const double T_down = std::max(0.0001, T - h_T);
+    const double sigma_down = std::max(0.001, sigma - h_vol);
+    const double r_down = std::max(0.0, r - h_r);
+
+    const double drift_base = (r - 0.5 * sigma * sigma) * T;
+    const double vol_sqrt_T = sigma * std::sqrt(T);
+    const double discount_base = std::exp(-r * T);
+
+    const double drift_S_up = drift_base;
+    const double drift_S_down = drift_base;
+
+    const double drift_vol_up = (r - 0.5 * (sigma + h_vol) * (sigma + h_vol)) * T;
+    const double vol_sqrt_T_vol_up = (sigma + h_vol) * std::sqrt(T);
+
+    const double drift_vol_down = (r - 0.5 * sigma_down * sigma_down) * T;
+    const double vol_sqrt_T_vol_down = sigma_down * std::sqrt(T);
+
+    const double drift_T_down = (r - 0.5 * sigma * sigma) * T_down;
+    const double vol_sqrt_T_down = sigma * std::sqrt(T_down);
+    const double discount_T_down = std::exp(-r * T_down);
+
+    const double drift_r_up = ((r + h_r) - 0.5 * sigma * sigma) * T;
+    const double discount_r_up = std::exp(-(r + h_r) * T);
+
+    const double drift_r_down = (r_down - 0.5 * sigma * sigma) * T;
+    const double discount_r_down = std::exp(-r_down * T);
+
+    struct ThreadSums {
+        double base;
+        double S_up;
+        double S_down;
+        double vol_up;
+        double vol_down;
+        double T_down;
+        double r_up;
+        double r_down;
+    };
+
+    std::vector<ThreadSums> thread_sums(num_threads, {0,0,0,0,0,0,0,0});
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+
+    for (int t = 0; t < num_threads; ++t) {
+        int count = trials_per_thread + (t < remaining_trials ? 1 : 0);
+
+        threads.emplace_back([&, t, count]() {
+            std::mt19937_64 gen(std::chrono::high_resolution_clock::now().time_since_epoch().count() + t * 7777);
+            std::normal_distribution<> norm_dist(0.0, 1.0);
+
+            double sum_base = 0.0;
+            double sum_S_up = 0.0;
+            double sum_S_down = 0.0;
+            double sum_vol_up = 0.0;
+            double sum_vol_down = 0.0;
+            double sum_T_down = 0.0;
+            double sum_r_up = 0.0;
+            double sum_r_down = 0.0;
+
+            for (int i = 0; i < count; ++i) {
+                const double z = norm_dist(gen);
+
+                const double ST_base = S0 * std::exp(drift_base + vol_sqrt_T * z);
+                sum_base += calculate_payoff(ST_base, K, isCall);
+
+                const double ST_S_up = (S0 + h_S) * std::exp(drift_S_up + vol_sqrt_T * z);
+                sum_S_up += calculate_payoff(ST_S_up, K, isCall);
+
+                const double ST_S_down = (S0 - h_S) * std::exp(drift_S_down + vol_sqrt_T * z);
+                sum_S_down += calculate_payoff(ST_S_down, K, isCall);
+
+                const double ST_vol_up = S0 * std::exp(drift_vol_up + vol_sqrt_T_vol_up * z);
+                sum_vol_up += calculate_payoff(ST_vol_up, K, isCall);
+
+                const double ST_vol_down = S0 * std::exp(drift_vol_down + vol_sqrt_T_vol_down * z);
+                sum_vol_down += calculate_payoff(ST_vol_down, K, isCall);
+
+                const double ST_T_down = S0 * std::exp(drift_T_down + vol_sqrt_T_down * z);
+                sum_T_down += calculate_payoff(ST_T_down, K, isCall);
+
+                const double ST_r_up = S0 * std::exp(drift_r_up + vol_sqrt_T * z);
+                sum_r_up += calculate_payoff(ST_r_up, K, isCall);
+
+                const double ST_r_down = S0 * std::exp(drift_r_down + vol_sqrt_T * z);
+                sum_r_down += calculate_payoff(ST_r_down, K, isCall);
+            }
+
+            thread_sums[t] = {sum_base, sum_S_up, sum_S_down, sum_vol_up, sum_vol_down, sum_T_down, sum_r_up, sum_r_down};
+        });
+    }
+
+    for (auto &th : threads) {
+        th.join();
+    }
+
+    double tot_base = 0, tot_S_up = 0, tot_S_down = 0, tot_vol_up = 0, tot_vol_down = 0, tot_T_down = 0, tot_r_up = 0, tot_r_down = 0;
+    for (const auto &ts : thread_sums) {
+        tot_base += ts.base;
+        tot_S_up += ts.S_up;
+        tot_S_down += ts.S_down;
+        tot_vol_up += ts.vol_up;
+        tot_vol_down += ts.vol_down;
+        tot_T_down += ts.T_down;
+        tot_r_up += ts.r_up;
+        tot_r_down += ts.r_down;
+    }
+
+    double price_base = (tot_base / numTrials) * discount_base;
+    double price_S_up = (tot_S_up / numTrials) * discount_base;
+    double price_S_down = (tot_S_down / numTrials) * discount_base;
+    double price_vol_up = (tot_vol_up / numTrials) * discount_base;
+    double price_vol_down = (tot_vol_down / numTrials) * discount_base;
+    double price_T_down = (tot_T_down / numTrials) * discount_T_down;
+    double price_r_up = (tot_r_up / numTrials) * discount_r_up;
+    double price_r_down = (tot_r_down / numTrials) * discount_r_down;
 
     double delta = (price_S_up - price_S_down) / (2.0 * h_S);
-    double gamma = (price_S_up - 2.0 * base_price + price_S_down) / (h_S * h_S);
-
-    // Vega (Vol bump: h_vol = 0.01)
-    double h_vol = 0.01;
-    double price_vol_up, l3, u3, price_vol_down, l4, u4;
-    monte_carlo_black_scholes_mt(S0, K, r, sigma + h_vol, T, isCall, numTrials, num_threads, price_vol_up, l3, u3);
-    monte_carlo_black_scholes_mt(S0, K, r, std::max(0.001, sigma - h_vol), T, isCall, numTrials, num_threads, price_vol_down, l4, u4);
-
+    double gamma = (price_S_up - 2.0 * price_base + price_S_down) / (h_S * h_S);
     double vega = (price_vol_up - price_vol_down) / (2.0 * h_vol);
-
-    // Theta (Time bump: h_T = 1.0 / 365.0)
-    double h_T = 1.0 / 365.0;
-    double price_T_down, l5, u5;
-    monte_carlo_black_scholes_mt(S0, K, r, sigma, std::max(0.001, T - h_T), isCall, numTrials, num_threads, price_T_down, l5, u5);
-
-    double theta = (price_T_down - base_price) / h_T; // Annualized theta
-
-    // Rho (Interest rate bump: h_r = 0.001)
-    double h_r = 0.001;
-    double price_r_up, l6, u6, price_r_down, l7, u7;
-    monte_carlo_black_scholes_mt(S0, K, r + h_r, sigma, T, isCall, numTrials, num_threads, price_r_up, l6, u6);
-    monte_carlo_black_scholes_mt(S0, K, std::max(0.0, r - h_r), sigma, T, isCall, numTrials, num_threads, price_r_down, l7, u7);
-
+    double theta = (price_T_down - price_base) / h_T;
     double rho = (price_r_up - price_r_down) / (2.0 * h_r);
 
-    return {delta, gamma, vega, theta, rho, base_price};
+    return {delta, gamma, vega, theta, rho, price_base};
 }
 
 // Generate Sample Price Paths for Visualizer
@@ -549,12 +649,220 @@ void calculate_stats(const std::vector<BenchmarkResult> &results,
     }
 }
 
+// Normal cumulative distribution function (CDF)
+FORCE_INLINE double norm_cdf(double x)
+{
+    return 0.5 * std::erfc(-x * M_SQRT1_2);
+}
+
+// Analytical Black-Scholes Delta for Call and Put
+FORCE_INLINE double bs_delta(double S, double K, double r, double sigma, double tau, bool isCall)
+{
+    if (tau <= 1e-6 || S <= 1e-6)
+    {
+        if (isCall) return (S > K) ? 1.0 : 0.0;
+        else return (S < K) ? -1.0 : 0.0;
+    }
+    double d1 = (std::log(S / K) + (r + 0.5 * sigma * sigma) * tau) / (sigma * std::sqrt(tau));
+    double N_d1 = norm_cdf(d1);
+    return isCall ? N_d1 : (N_d1 - 1.0);
+}
+
+// Analytical Black-Scholes Price for Call and Put
+FORCE_INLINE double bs_price(double S, double K, double r, double sigma, double tau, bool isCall)
+{
+    if (tau <= 1e-6 || S <= 1e-6)
+    {
+        return calculate_payoff(S, K, isCall);
+    }
+    double d1 = (std::log(S / K) + (r + 0.5 * sigma * sigma) * tau) / (sigma * std::sqrt(tau));
+    double d2 = d1 - sigma * std::sqrt(tau);
+    if (isCall) {
+        return S * norm_cdf(d1) - K * std::exp(-r * tau) * norm_cdf(d2);
+    } else {
+        return K * std::exp(-r * tau) * norm_cdf(-d2) - S * norm_cdf(-d1);
+    }
+}
+
+// Structure to store Hedging Simulation Summary
+struct DeltaHedgeResult
+{
+    double meanPnL;
+    double stdDevPnL;
+    double minPnL;
+    double maxPnL;
+    double var95;
+    double cvar95;
+    double avgTxCosts;
+    double executionTimeMs;
+    int numPaths;
+    int numSteps;
+    int rebalanceFreq;
+    double txCostPct;
+    std::vector<double> pnlDistribution;
+    std::vector<std::vector<std::vector<double>>> samplePaths;
+};
+
+DeltaHedgeResult simulate_delta_hedging_mt(double S0, double K, double r, double sigma,
+                                           double T, bool isCall, int numPaths,
+                                           int numSteps, int rebalanceFreq, double txCostPct,
+                                           int num_threads)
+{
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    if (num_threads <= 0) {
+        num_threads = std::thread::hardware_concurrency();
+        if (num_threads == 0) num_threads = 4;
+    }
+    num_threads = std::min(num_threads, numPaths);
+
+    int paths_per_thread = numPaths / num_threads;
+    int remaining_paths = numPaths % num_threads;
+
+    const double dt = T / numSteps;
+    const double drift = (r - 0.5 * sigma * sigma) * dt;
+    const double vol_sqrt_dt = sigma * std::sqrt(dt);
+
+    const double V0 = bs_price(S0, K, r, sigma, T, isCall);
+    const double delta0 = bs_delta(S0, K, r, sigma, T, isCall);
+    const double cost0 = std::abs(delta0) * S0 * txCostPct;
+    const double C0 = V0 - delta0 * S0 - cost0;
+
+    std::vector<std::vector<double>> thread_pnls(num_threads);
+    std::vector<double> thread_tx_costs(num_threads, 0.0);
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+
+    for (int t = 0; t < num_threads; ++t) {
+        int t_paths = paths_per_thread + (t < remaining_paths ? 1 : 0);
+        thread_pnls[t].reserve(t_paths);
+
+        threads.emplace_back([&, t, t_paths]() {
+            std::mt19937_64 gen(std::chrono::high_resolution_clock::now().time_since_epoch().count() + t * 9999);
+            std::normal_distribution<> norm_dist(0.0, 1.0);
+
+            double total_tx_accum = 0.0;
+
+            for (int p = 0; p < t_paths; ++p) {
+                double S = S0;
+                double shares = delta0;
+                double cash = C0;
+                double path_tx_cost = cost0;
+
+                for (int step = 1; step <= numSteps; ++step) {
+                    double z = norm_dist(gen);
+                    S *= std::exp(drift + vol_sqrt_dt * z);
+                    cash *= std::exp(r * dt);
+
+                    double tau = T - step * dt;
+                    if (step % rebalanceFreq == 0 && step < numSteps) {
+                        double target_delta = bs_delta(S, K, r, sigma, std::max(tau, 1e-6), isCall);
+                        double d_shares = target_delta - shares;
+                        double trade_cost = std::abs(d_shares) * S * txCostPct;
+                        cash -= (d_shares * S + trade_cost);
+                        shares = target_delta;
+                        path_tx_cost += trade_cost;
+                    }
+                }
+
+                double payoff = calculate_payoff(S, K, isCall);
+                double liquidating_cost = std::abs(shares) * S * txCostPct;
+                double final_cash = cash + shares * S - liquidating_cost - payoff;
+
+                thread_pnls[t].push_back(final_cash);
+                total_tx_accum += path_tx_cost;
+            }
+
+            thread_tx_costs[t] = total_tx_accum;
+        });
+    }
+
+    for (auto& th : threads) {
+        th.join();
+    }
+
+    std::vector<double> all_pnls;
+    all_pnls.reserve(numPaths);
+    double total_tx_all = 0.0;
+
+    for (int t = 0; t < num_threads; ++t) {
+        all_pnls.insert(all_pnls.end(), thread_pnls[t].begin(), thread_pnls[t].end());
+        total_tx_all += thread_tx_costs[t];
+    }
+
+    std::sort(all_pnls.begin(), all_pnls.end());
+
+    double sum_pnl = std::accumulate(all_pnls.begin(), all_pnls.end(), 0.0);
+    double mean_pnl = sum_pnl / numPaths;
+
+    double var_sum = 0.0;
+    for (double pnl : all_pnls) {
+        double diff = pnl - mean_pnl;
+        var_sum += diff * diff;
+    }
+    double std_dev_pnl = std::sqrt(var_sum / (numPaths > 1 ? numPaths - 1 : 1));
+
+    double min_pnl = all_pnls.front();
+    double max_pnl = all_pnls.back();
+
+    int var_idx = static_cast<int>(0.05 * numPaths);
+    double var95 = all_pnls[var_idx];
+    double cvar95_sum = std::accumulate(all_pnls.begin(), all_pnls.begin() + var_idx + 1, 0.0);
+    double cvar95 = cvar95_sum / (var_idx + 1);
+
+    double avg_tx_cost = total_tx_all / numPaths;
+
+    std::vector<std::vector<std::vector<double>>> sample_paths;
+    int sample_count = std::min(5, numPaths);
+    std::mt19937_64 sample_gen(42);
+    std::normal_distribution<> norm_dist(0.0, 1.0);
+
+    for (int p = 0; p < sample_count; ++p) {
+        std::vector<std::vector<double>> path_steps;
+        path_steps.reserve(numSteps + 1);
+
+        double S = S0;
+        double delta = delta0;
+        double shares = delta0;
+        double cash = C0;
+
+        path_steps.push_back({0.0, S, delta, shares, cash, cash + shares * S - V0});
+
+        for (int step = 1; step <= numSteps; ++step) {
+            double z = norm_dist(sample_gen);
+            S *= std::exp(drift + vol_sqrt_dt * z);
+            cash *= std::exp(r * dt);
+
+            double tau = T - step * dt;
+            if (step % rebalanceFreq == 0 && step < numSteps) {
+                double target_delta = bs_delta(S, K, r, sigma, std::max(tau, 1e-6), isCall);
+                double d_shares = target_delta - shares;
+                double trade_cost = std::abs(d_shares) * S * txCostPct;
+                cash -= (d_shares * S + trade_cost);
+                shares = target_delta;
+                delta = target_delta;
+            }
+
+            double opt_val = (step == numSteps) ? calculate_payoff(S, K, isCall) : bs_price(S, K, r, sigma, std::max(tau, 1e-6), isCall);
+            double hedge_error = cash + shares * S - opt_val;
+            path_steps.push_back({step * dt, S, delta, shares, cash, hedge_error});
+        }
+
+        sample_paths.push_back(path_steps);
+    }
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    double exec_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+
+    return {mean_pnl, std_dev_pnl, min_pnl, max_pnl, var95, cvar95, avg_tx_cost, exec_ms, numPaths, numSteps, rebalanceFreq, txCostPct, all_pnls, sample_paths};
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 9)
     {
-        std::cerr << "Usage: " << argv[0] << " <S0> <K> <r> <sigma> <T> <isCall> <numTrials> <benchmark_mode> [threads] [iterations/numSteps]" << std::endl;
-        std::cerr << "  benchmark_mode: 0 = European single run, 1 = benchmark, 2 = Asian option, 3 = Greeks, 4 = Price paths" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <S0> <K> <r> <sigma> <T> <isCall> <numTrials> <benchmark_mode> [threads] [numSteps/iterations] [rebalanceFreq] [txCostPct]" << std::endl;
+        std::cerr << "  benchmark_mode: 0 = European single run, 1 = benchmark, 2 = Asian option, 3 = Greeks, 4 = Price paths, 5 = Delta-Hedging Simulator" << std::endl;
         return 1;
     }
 
@@ -658,6 +966,56 @@ int main(int argc, char *argv[])
                 }
                 std::cout << "]";
                 if (i < paths.size() - 1) std::cout << ",";
+            }
+            std::cout << "]}";
+        }
+        else if (benchmark_mode == 5)
+        {
+            // Delta-Hedging Simulator Mode
+            int numSteps = 252;
+            int rebalanceFreq = 1;
+            double txCostPct = 0.001; // 10 bps
+
+            if (argc > 10) numSteps = std::stoi(argv[10]);
+            if (argc > 11) rebalanceFreq = std::stoi(argv[11]);
+            if (argc > 12) txCostPct = std::stod(argv[12]);
+
+            DeltaHedgeResult res = simulate_delta_hedging_mt(S0, K, r, sigma, T, isCall, numTrials, numSteps, rebalanceFreq, txCostPct, threads);
+
+            std::cout << "{\"executionTimeMs\":" << std::fixed << std::setprecision(3) << res.executionTimeMs
+                      << ",\"numPaths\":" << res.numPaths
+                      << ",\"numSteps\":" << res.numSteps
+                      << ",\"rebalanceFreq\":" << res.rebalanceFreq
+                      << ",\"transactionCostPct\":" << std::fixed << std::setprecision(5) << res.txCostPct
+                      << ",\"summaryStatistics\":{"
+                      << "\"meanPnL\":" << std::fixed << std::setprecision(4) << res.meanPnL
+                      << ",\"stdDevPnL\":" << res.stdDevPnL
+                      << ",\"minPnL\":" << res.minPnL
+                      << ",\"maxPnL\":" << res.maxPnL
+                      << ",\"var95\":" << res.var95
+                      << ",\"cvar95\":" << res.cvar95
+                      << ",\"avgTxCosts\":" << res.avgTxCosts
+                      << "},\"pnlDistribution\":[";
+
+            for (size_t i = 0; i < res.pnlDistribution.size(); ++i) {
+                std::cout << std::fixed << std::setprecision(4) << res.pnlDistribution[i];
+                if (i < res.pnlDistribution.size() - 1) std::cout << ",";
+            }
+            std::cout << "],\"samplePaths\":[";
+            for (size_t i = 0; i < res.samplePaths.size(); ++i) {
+                std::cout << "[";
+                for (size_t j = 0; j < res.samplePaths[i].size(); ++j) {
+                    std::cout << "{\"t\":" << std::fixed << std::setprecision(4) << res.samplePaths[i][j][0]
+                              << ",\"stock\":" << res.samplePaths[i][j][1]
+                              << ",\"delta\":" << res.samplePaths[i][j][2]
+                              << ",\"shares\":" << res.samplePaths[i][j][3]
+                              << ",\"cash\":" << res.samplePaths[i][j][4]
+                              << ",\"hedgeError\":" << res.samplePaths[i][j][5]
+                              << "}";
+                    if (j < res.samplePaths[i].size() - 1) std::cout << ",";
+                }
+                std::cout << "]";
+                if (i < res.samplePaths.size() - 1) std::cout << ",";
             }
             std::cout << "]}";
         }

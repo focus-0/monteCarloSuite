@@ -404,6 +404,20 @@ INSTRUCTIONS:
   }
 });
 
+/**
+ * @route POST /api/simulation/delta-hedge
+ * @desc Run multi-threaded Delta-Hedging Monte Carlo simulation
+ */
+router.post('/api/simulation/delta-hedge', async (req, res) => {
+  try {
+    const params = req.body || {};
+    const result = await monteCarloService.simulateDeltaHedging(params);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Delta-Hedging simulation failed' });
+  }
+});
+
 // History routes
 router.use('/api/history', historyRoutes);
 

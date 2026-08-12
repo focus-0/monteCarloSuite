@@ -57,12 +57,45 @@ async function getMarketData(ticker) {
         }
       }
 
+      // Try fetching ATM Implied Volatility from options chain
+      let impliedVol = null;
+      try {
+        const optionChain = await yahooFinance.options(symbol);
+        if (optionChain && optionChain.options && optionChain.options.length > 0) {
+          const calls = optionChain.options[0].calls || [];
+          if (calls.length > 0) {
+            // Find ATM call option (strike closest to current price)
+            let closestCall = calls[0];
+            let minDiff = Math.abs(closestCall.strike - currentPrice);
+
+            for (const call of calls) {
+              const diff = Math.abs(call.strike - currentPrice);
+              if (diff < minDiff && call.impliedVolatility > 0) {
+                minDiff = diff;
+                closestCall = call;
+              }
+            }
+
+            if (closestCall && closestCall.impliedVolatility > 0) {
+              impliedVol = closestCall.impliedVolatility;
+            }
+          }
+        }
+      } catch (optErr) {
+        // Fallback to historical volatility if options chain is unavailable
+      }
+
+      const finalVol = impliedVol || calculatedVol;
+
       return {
         symbol,
         name: shortName,
         currency,
         price: Number(currentPrice.toFixed(2)),
-        volatility: Number(calculatedVol.toFixed(4)),
+        volatility: Number(finalVol.toFixed(4)),
+        impliedVolatility: impliedVol ? Number(impliedVol.toFixed(4)) : null,
+        historicalVolatility: Number(calculatedVol.toFixed(4)),
+        volatilitySource: impliedVol ? 'implied' : 'historical',
         historicalDays: history ? history.length : 0
       };
     }
@@ -83,6 +116,9 @@ async function getMarketData(ticker) {
     currency: 'USD',
     price: fallback.price,
     volatility: fallback.volatility,
+    impliedVolatility: fallback.volatility,
+    historicalVolatility: fallback.volatility,
+    volatilitySource: 'fallback',
     historicalDays: 252,
     isFallback: true
   };

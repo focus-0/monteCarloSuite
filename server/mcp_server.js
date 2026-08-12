@@ -79,6 +79,26 @@ const TOOLS = [
       },
       required: ['S0', 'K', 'r', 'sigma', 'T', 'isCall', 'numTrials']
     }
+  },
+  {
+    name: 'simulate_delta_hedging',
+    description: 'Simulate discrete Delta-Hedging over 10,000 Monte Carlo paths with transaction costs, outputting full P&L distribution, 95% VaR, 95% CVaR, and step-by-step sample paths.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        S0: { type: 'number', description: 'Initial stock price' },
+        K: { type: 'number', description: 'Strike price' },
+        r: { type: 'number', description: 'Risk-free interest rate' },
+        sigma: { type: 'number', description: 'Annualized volatility' },
+        T: { type: 'number', description: 'Time to maturity in years' },
+        isCall: { type: 'boolean', description: 'true for Call, false for Put' },
+        numTrials: { type: 'integer', description: 'Number of simulation paths (default 10000)' },
+        numSteps: { type: 'integer', description: 'Trading steps per year (default 252 for daily)' },
+        rebalanceFreq: { type: 'integer', description: 'Rebalance frequency in steps (default 1 for daily)' },
+        txCostPct: { type: 'number', description: 'Transaction cost percentage per trade (default 0.001 = 10 bps)' }
+      },
+      required: ['S0', 'K', 'r', 'sigma', 'T', 'isCall']
+    }
   }
 ];
 
@@ -90,6 +110,8 @@ async function handleToolCall(name, args) {
       return await monteCarloService.calculateAsianOptionPrice(args);
     case 'calculate_greeks':
       return await monteCarloService.calculateGreeks(args);
+    case 'simulate_delta_hedging':
+      return await monteCarloService.simulateDeltaHedging(args);
     case 'run_benchmark': {
       const cppResult = await monteCarloService.calculateOptionPrice(args);
       const jsResult = monteCarloService.calculateOptionPriceJS(args);

@@ -112,6 +112,17 @@ class MonteCarloService {
     return { executionTimeMs: 1.2, numPaths, numSteps, paths };
   }
 
+  async simulateDeltaHedging(params) {
+    try {
+      if (cppMonteCarlo.isExecutableAvailable()) {
+        return await cppMonteCarlo.simulateDeltaHedging(params);
+      }
+    } catch (cppError) {
+      console.warn('C++ Delta-Hedging simulation failed:', cppError.message);
+    }
+    throw new Error('C++ binary required for Delta-Hedging Simulation');
+  }
+
   async getMarketData(ticker) {
     return marketData.getMarketData(ticker);
   }
