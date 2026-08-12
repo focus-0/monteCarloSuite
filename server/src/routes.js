@@ -238,6 +238,68 @@ router.get('/api/implementation-status', (req, res) => {
   res.json(monteCarloService.getImplementationStatus());
 });
 
+// Non-blocking C++ simulation endpoint
+router.post('/api/black-scholes/cpp', monteCarloValidation, handleValidationErrors, sanitizeNumericInputs, async (req, res) => {
+  try {
+    const result = await monteCarloService.calculateOptionPrice(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'C++ calculation failed' });
+  }
+});
+
+// Standalone JS simulation endpoint
+router.post('/api/black-scholes/js', monteCarloValidation, handleValidationErrors, sanitizeNumericInputs, async (req, res) => {
+  try {
+    const result = monteCarloService.calculateOptionPriceJS(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'JS calculation failed' });
+  }
+});
+
+// Asian option pricing endpoint
+router.post('/api/asian-option', monteCarloValidation, handleValidationErrors, sanitizeNumericInputs, async (req, res) => {
+  try {
+    const result = await monteCarloService.calculateAsianOptionPrice(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Asian option calculation failed' });
+  }
+});
+
+// Greeks calculation endpoint
+router.post('/api/greeks', monteCarloValidation, handleValidationErrors, sanitizeNumericInputs, async (req, res) => {
+  try {
+    const result = await monteCarloService.calculateGreeks(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Greeks calculation failed' });
+  }
+});
+
+// Price paths generation endpoint
+router.post('/api/price-paths', sanitizeNumericInputs, async (req, res) => {
+  try {
+    const { S0 = 100, r = 0.05, sigma = 0.2, T = 1, numPaths = 50, numSteps = 100 } = req.body;
+    const result = await monteCarloService.generatePricePaths({ S0, r, sigma, T, numPaths, numSteps });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Price path generation failed' });
+  }
+});
+
+// Yahoo Finance live quote and historical volatility endpoint
+router.get('/api/market/:ticker', async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    const data = await monteCarloService.getMarketData(ticker);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Failed to fetch market data' });
+  }
+});
+
 // History routes
 router.use('/api/history', historyRoutes);
 

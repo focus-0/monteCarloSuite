@@ -2,13 +2,8 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-// Path to the C++ executable
 const executablePath = path.join(__dirname, '..', 'cpp', 'monte_carlo');
 
-/**
- * Check if the C++ executable exists
- * @returns {boolean} True if the executable exists, false otherwise
- */
 function isExecutableAvailable() {
   try {
     return fs.existsSync(executablePath) && fs.accessSync(executablePath, fs.constants.X_OK) === undefined;
@@ -17,68 +12,25 @@ function isExecutableAvailable() {
   }
 }
 
-/**
- * Calculate option price using Monte Carlo simulation with C++ implementation
- * @param {Object} params - Black-Scholes parameters
- * @param {number} params.S0 - Initial stock price
- * @param {number} params.K - Strike price
- * @param {number} params.r - Risk-free interest rate
- * @param {number} params.sigma - Volatility
- * @param {number} params.T - Time to maturity in years
- * @param {boolean} params.isCall - True for call option, false for put option
- * @param {number} params.numTrials - Number of Monte Carlo trials
- * @param {number} [params.threads] - Number of threads to use (optional)
- * @returns {Promise<Object>} Option price and confidence interval
- */
-function monteCarloBlackScholes(params) {
+function runCppProcess(args) {
   return new Promise((resolve, reject) => {
-    // Validate that the executable exists
     if (!isExecutableAvailable()) {
       reject(new Error('C++ executable not found. Fallback to JavaScript implementation.'));
       return;
     }
 
-    // Validate inputs
-    const { S0, K, r, sigma, T, isCall, numTrials, threads } = params;
-    if (!S0 || !K || r === undefined || !sigma || !T || numTrials === undefined) {
-      reject(new Error('Missing required parameters'));
-      return;
-    }
-
-    // Prepare command-line arguments for C++ executable
-    const args = [
-      S0.toString(),
-      K.toString(),
-      r.toString(),
-      sigma.toString(),
-      T.toString(),
-      isCall ? '1' : '0',
-      numTrials.toString(),
-      '0' // benchmark mode 0 = single run
-    ];
-    
-    // Add thread count if specified
-    if (threads !== undefined) {
-      args.push(threads.toString());
-    }
-
-    // Spawn the C++ process
     const process = spawn(executablePath, args);
-    
     let stdoutData = '';
     let stderrData = '';
 
-    // Collect stdout data
     process.stdout.on('data', (data) => {
       stdoutData += data.toString();
     });
 
-    // Collect stderr data
     process.stderr.on('data', (data) => {
       stderrData += data.toString();
     });
 
-    // Handle process completion
     process.on('close', (code) => {
       if (code !== 0) {
         reject(new Error(`C++ process exited with code ${code}: ${stderrData}`));
@@ -86,10 +38,9 @@ function monteCarloBlackScholes(params) {
       }
 
       try {
-        // Parse the JSON output from the C++ executable
         const result = JSON.parse(stdoutData);
         if (result.error) {
-          reject(new Error('Error in C++ calculation'));
+          reject(new Error(result.error));
         } else {
           resolve(result);
         }
@@ -98,31 +49,82 @@ function monteCarloBlackScholes(params) {
       }
     });
 
-    // Handle process errors
     process.on('error', (error) => {
       reject(new Error(`Failed to start C++ process: ${error.message}`));
     });
   });
 }
 
-/**
- * Run C++ benchmark with multiple iterations
- * @param {Object} params - Black-Scholes parameters
- * @param {number} params.S0 - Initial stock price
- * @param {number} params.K - Strike price
- * @param {number} params.r - Risk-free interest rate
- * @param {number} params.sigma - Volatility
- * @param {number} params.T - Time to maturity in years
- * @param {boolean} params.isCall - True for call option, false for put option
- * @param {number} params.numTrials - Number of Monte Carlo trials
- * @param {number} params.benchmarkMode - 1 for benchmark mode
- * @param {number} params.threads - Number of threads to use
- * @param {number} params.iterations - Number of benchmark iterations
- * @returns {Promise<Object>} Benchmark results
- */
+function monteCarloBlackScholes(params) {
+  const { S0, K, r, sigma, T, isCall, numTrials, threads } = params;
+  const args = [
+    S0.toString(),
+    K.toString(),
+    r.toString(),
+    sigma.toString(),
+    T.toString(),
+    isCall ? '1' : '0',
+    numTrials.toString(),
+    '0' // Mode 0 = European
+  ];
+  if (threads !== undefined) args.push(threads.toString());
+  return runCppProcess(args);
+}
 
+function monteCarloAsianOption(params) {
+  const { S0, K, r, sigma, T, isCall, numTrials, numSteps = 252, threads } = params;
+  const args = [
+    S0.toString(),
+    K.toString(),
+    r.toString(),
+    sigma.toString(),
+    T.toString(),
+    isCall ? '1' : '0',
+    numTrials.toString(),
+    '2', // Mode 2 = Asian
+    (threads || 0).toString(),
+    numSteps.toString()
+  ];
+  return runCppProcess(args);
+}
+
+function calculateGreeks(params) {
+  const { S0, K, r, sigma, T, isCall, numTrials, threads } = params;
+  const args = [
+    S0.toString(),
+    K.toString(),
+    r.toString(),
+    sigma.toString(),
+    T.toString(),
+    isCall ? '1' : '0',
+    numTrials.toString(),
+    '3' // Mode 3 = Greeks
+  ];
+  if (threads !== undefined) args.push(threads.toString());
+  return runCppProcess(args);
+}
+
+function generatePricePaths(params) {
+  const { S0, r, sigma, T, numPaths = 50, numSteps = 100 } = params;
+  const args = [
+    S0.toString(),
+    '100', // K placeholder
+    r.toString(),
+    sigma.toString(),
+    T.toString(),
+    '1',
+    '1000',
+    '4', // Mode 4 = Paths
+    numPaths.toString(),
+    numSteps.toString()
+  ];
+  return runCppProcess(args);
+}
 
 module.exports = {
   monteCarloBlackScholes,
+  monteCarloAsianOption,
+  calculateGreeks,
+  generatePricePaths,
   isExecutableAvailable
-}; 
+};
