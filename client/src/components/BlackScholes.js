@@ -10,6 +10,7 @@ import PricePathsChart from './charts/PricePathsChart';
 import SensitivityChart from './charts/SensitivityChart';
 import QuantAgentPanel from './QuantAgentPanel';
 import DeltaHedgeSimulator from './DeltaHedgeSimulator';
+import AITradingArena from './AITradingArena';
 
 const API_BASE_URL = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
   ? '' 
@@ -141,6 +142,12 @@ const BlackScholes = () => {
             🛡️ Delta-Hedge Simulator
           </button>
           <button
+            className={`tab-btn ${activeTab === 'arena' ? 'active' : ''}`}
+            onClick={() => setActiveTab('arena')}
+          >
+            🏆 AI Trading Arena
+          </button>
+          <button
             className={`tab-btn ${activeTab === 'benchmark' ? 'active' : ''}`}
             onClick={() => setActiveTab('benchmark')}
           >
@@ -241,6 +248,12 @@ const BlackScholes = () => {
         {activeTab === 'delta-hedge' && (
           <div className="single-col">
             <DeltaHedgeSimulator baseParams={params} />
+          </div>
+        )}
+
+        {activeTab === 'arena' && (
+          <div className="single-col">
+            <AITradingArena />
           </div>
         )}
 

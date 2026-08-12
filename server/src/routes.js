@@ -1,6 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const monteCarloService = require('../utils/monte_carlo_service');
+const mftArena = require('../utils/mft_trading_arena');
 const historyRoutes = require('../routes/historyRoutes');
 
 const router = express.Router();
@@ -415,6 +416,20 @@ router.post('/api/simulation/delta-hedge', async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message || 'Delta-Hedging simulation failed' });
+  }
+});
+
+/**
+ * @route POST /api/mft/arena/run
+ * @desc Run 390-minute MFT Trading Arena simulation with AI strategy
+ */
+router.post('/api/mft/arena/run', async (req, res) => {
+  try {
+    const params = req.body || {};
+    const result = await mftArena.runTradingArena(params);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'MFT Trading Arena simulation failed' });
   }
 });
 
