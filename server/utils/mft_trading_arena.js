@@ -1,5 +1,6 @@
 const { generateIntradaySeries } = require('../data/intraday_market_data');
 const monteCarloService = require('./monte_carlo_service');
+const { getMarketNews } = require('./market_news');
 
 /**
  * MFT Trading Arena Simulation Engine
@@ -18,6 +19,9 @@ async function runTradingArena(params = {}) {
   const fullMarketData = generateIntradaySeries(symbol);
   const targetWindow = Math.min(Math.max(10, parseInt(timeWindow)), 390);
   const series = fullMarketData.series.slice(0, targetWindow);
+
+  // Fetch live breaking news for this symbol (non-blocking, runs in parallel)
+  const newsPromise = getMarketNews(symbol, 5);
 
   let cash = Number(capital);
   let sharesHeld = 0;
@@ -218,6 +222,14 @@ async function runTradingArena(params = {}) {
   const stdRet = Math.sqrt(returns.reduce((sum, r) => sum + Math.pow(r - avgRet, 2), 0) / returns.length) || 0.0001;
   const sharpeRatio = (avgRet / stdRet) * Math.sqrt(390);
 
+  // Await live news results
+  let liveNews = { articles: [] };
+  try {
+    liveNews = await newsPromise;
+  } catch (e) {
+    liveNews = { articles: [], error: e.message };
+  }
+
   const execMs = Date.now() - startT;
 
   return {
@@ -236,6 +248,12 @@ async function runTradingArena(params = {}) {
       totalTxCosts: Number(totalTxCosts.toFixed(2)),
       totalTrades: tradeLog.length
     },
+    liveNews: liveNews.articles.map(a => ({
+      title: a.title,
+      source: a.source,
+      pubDateFormatted: a.pubDateFormatted,
+      ageMinutes: a.ageMinutes
+    })),
     navCurve,
     tradeLog
   };
