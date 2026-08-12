@@ -9,6 +9,8 @@ import ConvergenceChart from './charts/ConvergenceChart';
 import PricePathsChart from './charts/PricePathsChart';
 import SensitivityChart from './charts/SensitivityChart';
 
+import QuantAgentPanel from './QuantAgentPanel';
+
 const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 
 const BlackScholes = () => {
@@ -23,7 +25,7 @@ const BlackScholes = () => {
   });
 
   const [optionType, setOptionType] = useState('european'); // 'european' or 'asian'
-  const [activeTab, setActiveTab] = useState('simulator'); // 'simulator' | 'benchmark' | 'paths' | 'history'
+  const [activeTab, setActiveTab] = useState('simulator'); // 'simulator' | 'agent' | 'benchmark' | 'paths' | 'history'
 
   const [cppResult, setCppResult] = useState(null);
   const [jsResult, setJsResult] = useState(null);
@@ -140,6 +142,12 @@ const BlackScholes = () => {
             📊 Option Simulator
           </button>
           <button
+            className={`tab-btn ${activeTab === 'agent' ? 'active' : ''}`}
+            onClick={() => setActiveTab('agent')}
+          >
+            🤖 AI Risk Analyst
+          </button>
+          <button
             className={`tab-btn ${activeTab === 'benchmark' ? 'active' : ''}`}
             onClick={() => setActiveTab('benchmark')}
           >
@@ -185,6 +193,7 @@ const BlackScholes = () => {
                     greeksResult={greeksResult}
                     optionType={optionType}
                   />
+                  <QuantAgentPanel simulationParams={params} />
                   <ConvergenceChart convergenceData={convergenceData} />
                   <SensitivityChart baseParams={params} />
                 </>
@@ -196,6 +205,12 @@ const BlackScholes = () => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'agent' && (
+          <div className="single-col">
+            <QuantAgentPanel simulationParams={params} />
           </div>
         )}
 
