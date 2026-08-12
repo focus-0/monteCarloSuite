@@ -99,25 +99,8 @@ const config = {
     maxCount: envInt('MARKET_NEWS_MAX_COUNT', 20)
   },
 
-  polygon: {
-    apiKey: env('POLYGON_API_KEY', ''),
-    apiBaseUrl: env('POLYGON_API_BASE_URL', 'https://api.polygon.io'),
-    intradayLimit: envInt('POLYGON_INTRADAY_LIMIT', 500)
-  },
-
   intraday: {
-    maxBars: envInt('INTRADAY_MAX_BARS', 390),
-    rollingVolWindow: envInt('INTRADAY_ROLLING_VOL_WINDOW', 20),
-    defaultVol: envFloat('INTRADAY_DEFAULT_VOL', 0.25),
-    defaultDataSource: env('MFT_DEFAULT_DATA_SOURCE', 'yahoo')
-  },
-
-  mft: {
-    defaultCapital: envInt('MFT_DEFAULT_CAPITAL', 100000),
-    defaultTimeWindow: envInt('MFT_DEFAULT_TIME_WINDOW', 30),
-    defaultTickIntervalMs: envInt('MFT_DEFAULT_TICK_INTERVAL_MS', 2000),
-    defaultGemmaInterval: envInt('MFT_DEFAULT_GEMMA_INTERVAL', 5),
-    defaultDataSource: env('MFT_DEFAULT_DATA_SOURCE', 'yahoo')
+    defaultVol: envFloat('INTRADAY_DEFAULT_VOL', 0.25)
   },
 
   agent: {

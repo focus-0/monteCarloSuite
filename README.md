@@ -4,7 +4,7 @@
 
 The stack also includes an **Express REST API**, a **JSON-RPC Model Context Protocol (MCP) server**, a **Live Financial News pipeline**, and Yahoo Finance market data integration.
 
-> **Product focus:** The primary AI workflow is `POST /api/agent/analyze` — C++ pricing + local Gemma risk summary. An optional **MFT Trading Arena** backend (paced SSE sessions with Gemma in the trading loop) is documented separately in [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md).
+> **Product focus:** The primary AI workflow is `POST /api/agent/analyze` — C++ pricing + local Gemma risk summary.
 
 ---
 
@@ -13,7 +13,7 @@ The stack also includes an **Express REST API**, a **JSON-RPC Model Context Prot
 ```mermaid
 flowchart TB
   subgraph clients [Clients]
-    HTTP[HTTP / SSE clients]
+    HTTP[HTTP clients]
     MCPClient[MCP hosts — Claude Desktop, Python agents]
     Ollama[Ollama gemma4:12b]
   end
@@ -21,7 +21,6 @@ flowchart TB
   subgraph server [Node.js Express — port 5001]
     Routes[routes.js]
     Gemma[gemma_agent.js]
-    Arena["MFT Arena — see docs/MFT_TRADING_ARENA.md"]
     News[market_news.js]
     Market[market_data.js]
     TimeFmt[time_format.js]
@@ -43,11 +42,9 @@ flowchart TB
   HTTP --> Routes
   Routes --> MCService
   Routes --> Gemma
-  Routes --> Arena
   Gemma --> Ollama
   Gemma --> News
   Gemma --> MCService
-  Arena --> MCService
   MCService --> Binary
   Market --> Yahoo
   News --> GNews
@@ -61,12 +58,9 @@ flowchart TB
 | Express REST API | `server/server.js`, `server/src/routes.js` | HTTP endpoints |
 | MCP server | `server/mcp_server.js` | Standalone stdio JSON-RPC tool host |
 | Gemma agent | `server/utils/gemma_agent.js` | Ollama `gemma4:12b` with tool calling |
-| MFT arena | `docs/MFT_TRADING_ARENA.md` | Optional intraday replay + paced SSE sessions |
 | Market data | `server/utils/market_data.js` | Yahoo Finance spot + IV |
 | Options chain | `server/utils/options_chain.js` | Yahoo options chain, ATM picker |
 | Vol surface | `server/utils/vol_surface.js` | IV surface from chain |
-| Intraday data | `server/utils/intraday_provider.js` | Yahoo/Polygon/synthetic 1m bars |
-| Risk limits | `server/utils/risk_limits.js` | Hard pre-trade risk gate |
 | Market news | `server/utils/market_news.js` | Google News RSS headlines |
 | Timestamps | `server/utils/time_format.js` | ISO 8601 UTC + display formatting |
 | Python agents | `examples/agent/` | Optional offline Ollama + MCP scripts |
@@ -187,7 +181,7 @@ Asian and delta-hedge accept optional `numSteps`, `rebalanceFreq`, `txCostPct`.
 
 News articles include `pubDateIso`, `pubDateFormatted`, `ageMinutes`, and wall-clock `fetchedAt` (ISO 8601 UTC). Normalization is handled by `time_format.js`.
 
-The options chain endpoint returns nearest-expiry calls and puts with implied vol, used by market data and arena session initialization.
+The options chain endpoint returns nearest-expiry calls and puts with implied vol.
 
 ### 3.4 Gemma Risk Audit
 
@@ -234,11 +228,7 @@ Locally requires **Ollama** with `gemma4:12b` (`LLM_PROVIDER=ollama` in `server/
 
 > **Latency note:** Local `gemma4:12b` on `/api/agent/analyze` commonly takes **1–5+ minutes** wall time (`llmTimeSec` in `benchmarkStats`). Gemini on deploy is much faster. Optional tool-calling rounds (`get_market_news`, `calculate_greeks`) add a second inference pass.
 
-### 3.5 MFT Trading Arena
-
-Optional intraday simulation with rules-based batch replay and paced SSE sessions (including `ai_agent` with Gemma in the loop). See **[`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md)** for batch replay, live session endpoints, SSE events, risk limits, and intraday data sources.
-
-### 3.6 Simulation History (MongoDB)
+### 3.5 Simulation History (MongoDB)
 
 | Method | Path | Description |
 | :--- | :--- | :--- |
@@ -307,11 +297,10 @@ If `LLM_PROVIDER=gemini` without `GEMINI_API_KEY`, agent routes return a clear f
 | Function | Used By | Purpose |
 | :--- | :--- | :--- |
 | `runGemmaAgent(prompt)` | `POST /api/agent/analyze` | Risk audit with optional tool loop |
-| `runGemmaTradingStep(observation, history)` | MFT arena sessions | Structured trade JSON per tick — see [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md) |
 
 ### 4.3 Temporal Semantics
 
-News articles carry wall-clock `fetchedAt` / `pubDateIso`. The agent system prompt instructs Gemma to compare events using explicit ISO 8601 timestamps. Arena sessions additionally use a synthetic simulation clock — details in [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md).
+News articles carry wall-clock `fetchedAt` / `pubDateIso`. The agent system prompt instructs Gemma to compare events using explicit ISO 8601 timestamps.
 
 ### 4.4 Exact LLM input (`POST /api/agent/analyze`)
 
@@ -428,8 +417,6 @@ If the model answers without tools (common), there is **only one** LLM call.
 
 > **News is always prefetched** for `/api/agent/analyze` (in the user prompt). The model may still call `get_market_news` again via tools, which duplicates the fetch. **Prompt overlap:** The system message tells the model to call tools for real data; the user message already embeds C++ prices, Greeks, and headlines. That can trigger redundant tool calls (especially `calculate_greeks`) and a second, slower inference pass — see latency notes in §3.4.
 
-MFT arena trading steps (`runGemmaTradingStep`) use a **different** system prompt, observation JSON, and trade-decision schema — see [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md).
-
 ---
 
 ## 5. MCP Server (`server/mcp_server.js`)
@@ -538,7 +525,7 @@ Persisted when MongoDB is connected:
 | CMake | $\ge 3.14$ |
 | Node.js | $\ge 18$ |
 | MongoDB | Optional — history persistence |
-| Ollama | Required for local `/api/agent/analyze` (`gemma4:12b`); use **Gemini** on Docker/Render (see §11). MFT arena `ai_agent` sessions also need an LLM — see [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md) |
+| Ollama | Required for local `/api/agent/analyze` (`gemma4:12b`); use **Gemini** on Docker/Render (see §11) |
 
 ### 9.2 Install & Run (local dev)
 
@@ -602,23 +589,13 @@ Copy `server/.env.example` to `server/.env`. Variables are loaded automatically 
 | `GEMINI_API_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` | Gemini chat completions endpoint |
 | `GEMINI_TIMEOUT_MS` | `120000` | Gemini request timeout (ms) |
 | `GEMINI_KEYS_URL` | `https://aistudio.google.com/apikey` | Link shown in missing-key errors |
-| `DEFAULT_SYMBOL` | `AAPL` | Default ticker for news/MFT/market routes |
+| `DEFAULT_SYMBOL` | `AAPL` | Default ticker for news/market routes |
 | `MARKET_NEWS_RSS_URL` | `https://news.google.com/rss/search` | Google News RSS base URL |
 | `MARKET_NEWS_RSS_LOCALE` | `en-US` | RSS locale |
 | `MARKET_NEWS_RSS_REGION` | `US` | RSS region |
 | `MARKET_NEWS_DEFAULT_COUNT` | `5` | Default article count |
 | `MARKET_NEWS_MAX_COUNT` | `20` | Max articles per request |
-| `POLYGON_API_KEY` | — | Optional Polygon intraday data |
-| `POLYGON_API_BASE_URL` | `https://api.polygon.io` | Polygon API base |
-| `POLYGON_INTRADAY_LIMIT` | `500` | Max Polygon 1m bars per request |
-| `INTRADAY_MAX_BARS` | `390` | Max intraday bars (arena) |
-| `INTRADAY_ROLLING_VOL_WINDOW` | `20` | Rolling vol window (arena) |
-| `INTRADAY_DEFAULT_VOL` | `0.25` | Fallback vol when history thin |
-| `MFT_DEFAULT_CAPITAL` | `100000` | Arena default capital |
-| `MFT_DEFAULT_TIME_WINDOW` | `30` | Arena default session minutes |
-| `MFT_DEFAULT_TICK_INTERVAL_MS` | `2000` | Arena paced tick delay |
-| `MFT_DEFAULT_GEMMA_INTERVAL` | `5` | Arena LLM decision every N ticks |
-| `MFT_DEFAULT_DATA_SOURCE` | `yahoo` | Arena data source (`yahoo` / `polygon` / `synthetic`) |
+| `INTRADAY_DEFAULT_VOL` | `0.25` | Fallback vol when historical data is thin |
 | `AGENT_GREEKS_NUM_TRIALS` | `100000` | Monte Carlo trials for agent `calculate_greeks` tool |
 | `AGENT_NEWS_DEFAULT_COUNT` | `5` | Headlines prefetched for `/api/agent/analyze` |
 | `VALIDATION_STRONG_DELTA` | `0.5` | Greeks vs recommendation consistency threshold |
@@ -815,8 +792,6 @@ See **§9.2** for the full local workflow (`npm run dev`, env files, Ollama). Do
 | `time_format.js` | ISO 8601 timestamp utilities |
 | `mcp_server.js` | Stdio MCP JSON-RPC server |
 
-MFT arena modules (`mft_trading_arena.js`, `mft_arena_session.js`, `intraday_provider.js`, `risk_limits.js`) are documented in [`docs/MFT_TRADING_ARENA.md`](docs/MFT_TRADING_ARENA.md).
-
 ---
 
 ## 13. Render Deployment
@@ -863,7 +838,7 @@ Set in **Render Dashboard → Web Service → Environment**:
 | `MONGO_URI` | Optional | MongoDB Atlas connection string for simulation history |
 | `OLLAMA_URL` | No | Not used on Render — Ollama cannot run on Render |
 
-**Ollama is not required on Render.** Without `GEMINI_API_KEY`, AI routes (`POST /api/agent/analyze`, MFT arena `ai_agent` sessions) return a rule-based fallback instead of live LLM inference.
+**Ollama is not required on Render.** Without `GEMINI_API_KEY`, `POST /api/agent/analyze` returns a rule-based fallback instead of live LLM inference.
 
 ### 13.3 C++ on Render
 

@@ -2,11 +2,9 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const config = require('../config');
 const monteCarloService = require('../utils/monte_carlo_service');
-const mftArena = require('../utils/mft_trading_arena');
 const gemmaAgent = require('../utils/gemma_agent');
 const { validateRecommendationConsistency } = require('../utils/recommendation_validator');
 const { getMarketNews } = require('../utils/market_news');
-const { createSession, getSession } = require('../utils/mft_arena_session');
 const llmProvider = require('../utils/llm_provider');
 const historyRoutes = require('../routes/historyRoutes');
 
@@ -465,60 +463,6 @@ router.post('/api/simulation/delta-hedge', async (req, res) => {
   }
 });
 
-/**
- * @route POST /api/mft/arena/run
- * @desc Batch replay for rules-based strategies (delta_hedge, buy_hold)
- */
-router.post('/api/mft/arena/run', async (req, res) => {
-  try {
-    const params = req.body || {};
-    if (params.strategyMode === 'ai_agent') {
-      return res.status(400).json({
-        error: 'ai_agent strategy requires a live session. Use POST /api/mft/arena/session/start and connect to the SSE stream.'
-      });
-    }
-    const result = await mftArena.runTradingArena({
-      ...params,
-      dataSource: params.dataSource || config.mft.defaultDataSource,
-      sessionDate: params.sessionDate || null,
-      enforceRisk: params.enforceRisk !== false,
-      riskLimits: params.riskLimits || {}
-    });
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message || 'MFT Trading Arena simulation failed' });
-  }
-});
-
-/**
- * @route POST /api/mft/arena/session/start
- * @desc Create a paced live trading session (required for ai_agent)
- */
-router.post('/api/mft/arena/session/start', (req, res) => {
-  try {
-    const params = req.body || {};
-    const session = createSession({
-      symbol: params.symbol || config.defaultSymbol,
-      capital: params.capital || config.mft.defaultCapital,
-      strategyMode: params.strategyMode || 'ai_agent',
-      timeWindow: params.timeWindow || config.mft.defaultTimeWindow,
-      tickIntervalMs: params.tickIntervalMs || config.mft.defaultTickIntervalMs,
-      gemmaInterval: params.gemmaInterval || config.mft.defaultGemmaInterval,
-      dataSource: params.dataSource || config.mft.defaultDataSource,
-      sessionDate: params.sessionDate || null,
-      enforceRisk: params.enforceRisk !== false,
-      riskLimits: params.riskLimits || {}
-    });
-    res.json({
-      sessionId: session.id,
-      streamUrl: `/api/mft/arena/session/${session.id}/stream`,
-      ...session.getPublicState()
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to create arena session' });
-  }
-});
-
 router.get('/api/options-chain/:symbol', async (req, res) => {
   try {
     const { getOptionsChain } = require('../utils/options_chain');
@@ -533,92 +477,6 @@ router.get('/api/options-chain/:symbol', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message || 'Failed to fetch options chain' });
   }
-});
-
-/**
- * @route GET /api/mft/arena/session/:id/stream
- * @desc SSE stream of live tick updates, LLM decisions, and session events
- */
-router.get('/api/mft/arena/session/:id/stream', async (req, res) => {
-  const session = getSession(req.params.id);
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-
-  await session.ensureInitialized();
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
-
-  session.subscribe(res);
-
-  const snapshot = {
-    type: 'snapshot',
-    session: session.getPublicState(),
-    navCurve: session.state.navCurve,
-    tradeLog: session.state.tradeLog,
-    gemmaDecisions: session.state.gemmaDecisions,
-    liveNews: session.state.liveNews
-  };
-  res.write(`event: snapshot\n`);
-  res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
-
-  if (session.status === 'created') {
-    session.start().catch((err) => {
-      session.broadcast('error', { error: err.message });
-    });
-  }
-});
-
-/**
- * @route GET /api/mft/arena/session/:id/status
- */
-router.get('/api/mft/arena/session/:id/status', async (req, res) => {
-  const session = getSession(req.params.id);
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-  await session.ensureInitialized();
-  res.json({
-    ...session.getPublicState(),
-    navCurve: session.state.navCurve,
-    tradeLog: session.state.tradeLog,
-    gemmaDecisions: session.state.gemmaDecisions,
-    liveNews: session.state.liveNews
-  });
-});
-
-/**
- * @route POST /api/mft/arena/session/:id/pause
- */
-router.post('/api/mft/arena/session/:id/pause', (req, res) => {
-  const session = getSession(req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
-  session.pause();
-  res.json(session.getPublicState());
-});
-
-/**
- * @route POST /api/mft/arena/session/:id/resume
- */
-router.post('/api/mft/arena/session/:id/resume', (req, res) => {
-  const session = getSession(req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
-  session.resume();
-  res.json(session.getPublicState());
-});
-
-/**
- * @route POST /api/mft/arena/session/:id/stop
- */
-router.post('/api/mft/arena/session/:id/stop', (req, res) => {
-  const session = getSession(req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
-  session.stop();
-  res.json(session.getPublicState());
 });
 
 // History routes
