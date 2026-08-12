@@ -133,7 +133,7 @@ const ParameterForm = ({ params, onChange, onSubmit, loading, optionType, setOpt
               <span className="spinner"></span> Running Simulation...
             </span>
           ) : (
-            '⚡ Run Monte Carlo Simulation'
+            'Run Monte Carlo Simulation'
           )}
         </button>
       </form>

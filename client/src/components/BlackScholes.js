@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
 import ParameterForm from './ParameterForm';
 import TickerLookup from './TickerLookup';
@@ -8,7 +8,6 @@ import PerformanceChart from './charts/PerformanceChart';
 import ConvergenceChart from './charts/ConvergenceChart';
 import PricePathsChart from './charts/PricePathsChart';
 import SensitivityChart from './charts/SensitivityChart';
-
 import QuantAgentPanel from './QuantAgentPanel';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '';
@@ -24,8 +23,8 @@ const BlackScholes = () => {
     numTrials: 100000
   });
 
-  const [optionType, setOptionType] = useState('european'); // 'european' or 'asian'
-  const [activeTab, setActiveTab] = useState('simulator'); // 'simulator' | 'agent' | 'benchmark' | 'paths' | 'history'
+  const [optionType, setOptionType] = useState('european');
+  const [activeTab, setActiveTab] = useState('simulator');
 
   const [cppResult, setCppResult] = useState(null);
   const [jsResult, setJsResult] = useState(null);
@@ -66,7 +65,6 @@ const BlackScholes = () => {
     };
 
     try {
-      // 1. Non-blocking C++ simulation endpoint (renders instantly)
       const cppEndpoint = optionType === 'asian' ? '/api/asian-option' : '/api/black-scholes/cpp';
       const cppRes = await axios.post(`${API_BASE_URL}${cppEndpoint}`, {
         ...parsedParams,
@@ -74,22 +72,18 @@ const BlackScholes = () => {
       });
       setCppResult(cppRes.data);
 
-      // 2. Fetch Greeks asynchronously
       axios.post(`${API_BASE_URL}/api/greeks`, parsedParams)
         .then(res => setGreeksResult(res.data))
         .catch(err => console.error('Greeks fetch failed:', err));
 
-      // 3. Fetch Price Paths asynchronously
       axios.post(`${API_BASE_URL}/api/price-paths`, { S0: parsedParams.S0, r: parsedParams.r, sigma: parsedParams.sigma, T: parsedParams.T })
         .then(res => setPathsData(res.data))
         .catch(err => console.error('Paths fetch failed:', err));
 
-      // 4. Standalone JS benchmark endpoint asynchronously
       axios.post(`${API_BASE_URL}/api/black-scholes/js`, parsedParams)
         .then(res => setJsResult(res.data))
         .catch(err => console.error('JS benchmark failed:', err));
 
-      // 5. Generate convergence data points
       const trialSteps = [1000, 5000, 10000, 50000, 100000];
       const convData = [];
       for (const t of trialSteps) {
@@ -132,38 +126,38 @@ const BlackScholes = () => {
     <div className="monte-carlo-dashboard">
       <nav className="dashboard-nav">
         <div className="nav-brand">
-          <h2>MonteCarloSuite <span className="version-tag">v2.0</span></h2>
+          <h2>MonteCarloSuite</h2>
         </div>
         <div className="nav-tabs">
           <button
             className={`tab-btn ${activeTab === 'simulator' ? 'active' : ''}`}
             onClick={() => setActiveTab('simulator')}
           >
-            📊 Option Simulator
+            Option Simulator
           </button>
           <button
             className={`tab-btn ${activeTab === 'agent' ? 'active' : ''}`}
             onClick={() => setActiveTab('agent')}
           >
-            🤖 AI Risk Analyst
+            AI Risk Analyst
           </button>
           <button
             className={`tab-btn ${activeTab === 'benchmark' ? 'active' : ''}`}
             onClick={() => setActiveTab('benchmark')}
           >
-            ⚡ Speed Benchmark
+            Speed Benchmark
           </button>
           <button
             className={`tab-btn ${activeTab === 'paths' ? 'active' : ''}`}
             onClick={() => setActiveTab('paths')}
           >
-            📈 Price Trajectories
+            Price Trajectories
           </button>
           <button
             className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
             onClick={() => setActiveTab('history')}
           >
-            🕒 History
+            History
           </button>
         </div>
       </nav>
@@ -199,9 +193,8 @@ const BlackScholes = () => {
                 </>
               ) : (
                 <div className="card placeholder-card">
-                  <div className="placeholder-icon">🎲</div>
                   <h3>Ready to Run Simulation</h3>
-                  <p>Configure option parameters on the left or lookup a live ticker to auto-fill realized volatility.</p>
+                  <p>Configure option parameters on the left or select a stock preset to auto-fill volatility.</p>
                 </div>
               )}
             </div>
