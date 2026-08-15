@@ -22,8 +22,13 @@ const app = express();
 app.set('trust proxy', 1);
 
 // Security middleware
-// Set security headers
-app.use(helmet());
+// Allow React SPA inline scripts, fonts, and assets
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false
+  })
+);
 
 // Rate limiting - relaxed for high-frequency simulation runs and benchmarks
 const apiLimiter = rateLimit({
