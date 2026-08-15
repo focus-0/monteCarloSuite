@@ -1,10 +1,12 @@
 # MonteCarloSuite — Multi-Threaded C++ Quantitative Engine & AI Risk Backend
 
-**MonteCarloSuite** is a high-performance quantitative finance backend built around a native **multi-threaded C++17 Monte Carlo engine** for sub-millisecond option pricing, risk sensitivity computation ($\Delta, \Gamma, \nu, \Theta, \rho$), and discrete delta-hedging simulation. An **AI risk agent** (local Ollama `gemma4:12b`, **Gemini** on Docker/Render, or optional Groq) provides AI-driven risk audits over C++ pricing output, with optional tool calls for follow-up requests.
+**MonteCarloSuite** is a high-performance quantitative finance backend built around a native **multi-threaded C++17 Monte Carlo engine** for sub-millisecond option pricing, risk sensitivity computation ($\Delta, \Gamma, \nu, \Theta, \rho$), and discrete delta-hedging simulation. The C++ engine operates in dual modes: an **in-process Node-API (N-API) native addon** for zero-overhead in-memory execution ($0.001\text{ ms}$ latency), and a **standalone multi-threaded CLI binary**.
 
-The stack also includes an **Express REST API**, a **JSON-RPC Model Context Protocol (MCP) server**, a **Live Financial News pipeline**, and Yahoo Finance market data integration.
+An **AI risk agent** (local Ollama `gemma4:12b`, **Gemini** on Docker/Render, or optional Groq) provides real-time streaming risk audits over C++ pricing output, with custom trader directives and scenario presets.
 
-> **Product focus:** The primary AI workflow is `POST /api/agent/analyze` — C++ pricing + LLM risk summary (Ollama locally, Gemini on deploy).
+The stack also includes an **Express REST API**, a **JSON-RPC Model Context Protocol (MCP) server** (over stdio and HTTP `POST /api/mcp`), a **Live Financial News pipeline**, and Yahoo Finance market data integration.
+
+> **Product focus:** The primary AI workflow is `POST /api/agent/stream` — C++ pricing + streaming LLM risk synthesis (Ollama locally, Gemini on deploy).
 
 ---
 
@@ -14,7 +16,7 @@ The stack also includes an **Express REST API**, a **JSON-RPC Model Context Prot
 flowchart TB
   subgraph clients [Clients]
     HTTP[HTTP clients]
-    MCPClient[MCP hosts — Claude Desktop, Python agents]
+    MCPClient[MCP hosts — Claude Desktop, Cursor, Python agents]
     Ollama[Ollama gemma4:12b]
   end
 
@@ -25,10 +27,12 @@ flowchart TB
     Market[market_data.js]
     TimeFmt[time_format.js]
     MCService[monte_carlo_service.js]
+    NapiAddon[monte_carlo_addon.node (N-API)]
   end
 
   subgraph native [C++ Engine]
-    Binary[server/cpp/monte_carlo]
+    Core[monte_carlo_core.h]
+    Binary[server/cpp/monte_carlo (CLI)]
   end
 
   subgraph external [External Data]
@@ -37,7 +41,7 @@ flowchart TB
     Mongo[(MongoDB — optional)]
   end
 
-  MCPClient -->|stdio JSON-RPC| MCPServer[mcp_server.js]
+  MCPClient -->|stdio & HTTP JSON-RPC| MCPServer[mcp_server.js]
   MCPServer --> MCService
   HTTP --> Routes
   Routes --> MCService
@@ -45,7 +49,10 @@ flowchart TB
   QuantAgent --> Ollama
   QuantAgent --> News
   QuantAgent --> MCService
-  MCService --> Binary
+  MCService -->|In-Process Direct Memory| NapiAddon
+  MCService -.->|Subprocess Fallback| Binary
+  NapiAddon --- Core
+  Binary --- Core
   Market --> Yahoo
   News --> GNews
   News --> TimeFmt
@@ -54,27 +61,37 @@ flowchart TB
 
 | Component | Path | Role |
 | :--- | :--- | :--- |
-| C++ Monte Carlo engine | `server/cpp/` | Pricing, Greeks, Asian options, delta hedge, price paths |
-| Express REST API | `server/server.js`, `server/src/routes.js` | HTTP endpoints |
-| MCP server | `server/mcp_server.js` | Standalone stdio JSON-RPC tool host |
-| Quant agent | `server/utils/quant_agent.js` | LLM tool-calling agent (Ollama / Gemini / Groq via `llm_provider.js`); `gemma_agent.js` re-exports for compat |
-| Market data | `server/utils/market_data.js` | Yahoo Finance spot + IV |
-| Options chain | `server/utils/options_chain.js` | Yahoo options chain, ATM picker |
-| Vol surface | `server/utils/vol_surface.js` | IV surface from chain |
-| Market news | `server/utils/market_news.js` | Google News RSS headlines |
-| Timestamps | `server/utils/time_format.js` | ISO 8601 UTC + display formatting |
-| Python agents | `examples/agent/` | Optional offline Ollama + MCP scripts |
-| React UI | `client/src/components/` | CRA dashboard — see **§10** |
+| Node-API Addon | `server/build/Release/monte_carlo_addon.node` | In-process native C++ execution with zero OS fork overhead ($0.001\text{ ms}$ latency) |
+| C++ Core Engine | `server/cpp/src/monte_carlo_core.h` | Multi-threaded pricing, Greeks, Asian options, delta hedge, price paths |
+| C++ CLI Binary | `server/cpp/monte_carlo` | Standalone CLI binary for headless runs and performance benchmarking |
+| Express REST API | `server/server.js`, `server/src/routes.js` | HTTP endpoints and SSE streaming copilot |
+| MCP Server | `server/mcp_server.js` | Dual stdio and HTTP JSON-RPC tool host (8 standardized quant tools) |
+| Quant Agent | `server/utils/quant_agent.js` | LLM streaming agent (Ollama / Gemini / Groq via `llm_provider.js`) |
+| Market Data | `server/utils/market_data.js` | Yahoo Finance spot + IV |
+| Market News | `server/utils/market_news.js` | Google News RSS headlines with ISO 8601 UTC timestamps |
+| React UI | `client/src/components/` | OLED high-contrast 4-tab dashboard |
 
 ---
 
-## 2. C++ Quantitative Core (`server/cpp/src/monte_carlo.cpp`)
+## 2. C++ Quantitative Core & Node-API Addon
 
-The core numerical calculations are implemented in C++17, compiled with `-O3 -march=native -pthread`. The binary is stateless and communicates via CLI arguments and `stdout` JSON.
+The core numerical calculations are implemented in C++17, compiled with `-O3 -march=native -pthread -ffast-math`.
 
-### 2.1 Build
+### 2.1 Dual Execution Architecture
+
+1. **In-Process Node-API Native Addon (`server/build/Release/monte_carlo_addon.node`):**
+   Compiled via `node-addon-api`, allowing Node.js to invoke native C++ methods directly in-memory. Eliminates $100\%$ of Linux subprocess `fork`/`spawn` overhead, delivering instant sub-millisecond execution even inside virtualized Docker containers and cloud platforms.
+2. **Standalone Multi-Threaded CLI Binary (`server/cpp/monte_carlo`):**
+   Compiled via `CMake` and `build.sh` for independent benchmarking, CLI experimentation, and headless test suites.
+
+### 2.2 Build
 
 ```bash
+# 1. Build Node-API native addon (in-process)
+cd server && npm run build:addon
+# or: ./build_addon.sh
+
+# 2. Build standalone C++ binary (CLI)
 cd server/cpp && ./build.sh
 # or: mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 ```
@@ -777,21 +794,21 @@ See **§9.2** for the full local workflow (`npm run dev`, env files, Ollama). Do
 
 | Module | Responsibility |
 | :--- | :--- |
-| `monte_carlo_cpp.js` | Spawns C++ binary via `execFile`, parses stdout JSON |
-| `monte_carlo_service.js` | Unified facade: C++ primary, JS fallback |
-| `monte_carlo_js.js` | Pure JS Monte Carlo for benchmarking |
-| `black_scholes_analytical.js` | Closed-form validation |
-| `quant_agent.js` | LLM chat (Ollama/Gemini/Groq), tool calling, structured JSON trading decision |
+| `monte_carlo_cpp.js` | In-process Node-API (`monte_carlo_addon.node`) native binding with fallback to CLI `spawn()` |
+| `monte_carlo_service.js` | Unified quantitative facade: Node-API C++ primary, JS benchmark fallback |
+| `monte_carlo_js.js` | Pure JS Monte Carlo engine for head-to-head benchmarking |
+| `black_scholes_analytical.js` | Closed-form analytical Black-Scholes benchmark & error validation |
+| `quant_agent.js` | LLM streaming risk copilot (Ollama/Gemini/Groq), SSE streaming, scenario presets |
 | `gemma_agent.js` | Deprecated re-export of `quant_agent.js` |
-| `llm_provider.js` | Ollama / Gemini / Groq provider abstraction (`undici` for Ollama); JSON mode support |
+| `llm_provider.js` | Ollama / Gemini / Groq provider abstraction (`undici` for Ollama); streaming SSE & JSON mode |
 | `recommendation_validator.js` | Parses JSON/regex BUY/SELL/HOLD; Greeks consistency flags; price-scaled vega threshold |
 | `market_data.js` | Yahoo Finance integration (uses `yahoo_finance.js`) |
 | `yahoo_finance.js` | Shared yahoo-finance2 client singleton |
 | `options_chain.js` | Yahoo options chain, ATM strike/IV picker |
 | `vol_surface.js` | IV surface from options chain |
-| `market_news.js` | Google News RSS |
+| `market_news.js` | Google News RSS headlines with ISO 8601 UTC timestamps |
 | `time_format.js` | ISO 8601 timestamp utilities |
-| `mcp_server.js` | Stdio MCP JSON-RPC server |
+| `mcp_server.js` | Dual stdio and HTTP JSON-RPC 2.0 MCP server (8 quantitative tools) |
 
 ---
 
