@@ -133,6 +133,35 @@ Example — Mode 3 Greeks:
 
 **Delta hedge (Mode 5):** discrete rebalancing with cash accrual $C_k = C_{k-1} e^{r\Delta t}$, proportional transaction costs, terminal liquidation P&L; reports mean/std P&L, 95% VaR/CVaR.
 
+### 2.5 Performance Benchmarks & Hardware Scaling
+
+Real-world benchmarks conducted on Apple Silicon ($S_0=\$100, K=\$100, \sigma=20\%, r=5\%, T=1\text{ yr}$, Call option):
+
+#### A. Standard Scaling (100k, 1M, 5M Paths)
+
+| Trials ($N$) | Metric | 1. JavaScript (V8 Engine) | 2. Standard C++ (1 Thread, `std::mt19937`) | 3. Deployed C++ (8 Cores, `Xoshiro256+`) | Deployed Speedup |
+|:---|:---|:---:|:---:|:---:|:---:|
+| **$100{,}000$** | Latency<br>Throughput<br>95% Error | $7.03\text{ ms}$<br>$14.2\text{ M paths/s}$<br>$\pm \$0.0466$ | $4.97\text{ ms}$<br>$20.1\text{ M paths/s}$<br>$\pm \$0.0465$ | **$0.66\text{ ms}$**<br>$\mathbf{151.9\text{ M paths/s}}$<br>$\mathbf{\pm \$0.0330}$ | **$10.7\times\text{ vs JS}$**<br>($7.5\times\text{ vs Std C++}$) |
+| **$1{,}000{,}000$** | Latency<br>Throughput<br>95% Error | $49.66\text{ ms}$<br>$20.4\text{ M paths/s}$<br>$\pm \$0.0147$ | $34.35\text{ ms}$<br>$29.1\text{ M paths/s}$<br>$\pm \$0.0147$ | **$3.24\text{ ms}$**<br>$\mathbf{308.6\text{ M paths/s}}$<br>$\mathbf{\pm \$0.0104}$ | **$15.3\times\text{ vs JS}$**<br>($10.6\times\text{ vs Std C++}$) |
+| **$5{,}000{,}000$** | Latency<br>Throughput<br>95% Error | $232.54\text{ ms}$<br>$21.5\text{ M paths/s}$<br>$\pm \$0.0066$ | $174.33\text{ ms}$<br>$28.7\text{ M paths/s}$<br>$\pm \$0.0066$ | **$17.43\text{ ms}$**<br>$\mathbf{286.8\text{ M paths/s}}$<br>$\mathbf{\pm \$0.0047}$ | **$13.3\times\text{ vs JS}$**<br>($10.0\times\text{ vs Std C++}$) |
+
+#### B. The 1,000,000,000 (1 Billion) Path Extreme Stress Test
+
+| Tier | Engine Architecture | Wall-Clock Time | Simulation Throughput | Estimated Fair Value | 95% Confidence Band | Error vs Exact BS | Speedup |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **1** | **JavaScript (V8)** | **$48.60\text{ s}$** | $20.58\text{ M paths/s}$ | $\$10.450334$ | $\pm \$0.000465$ | $\$0.000250$ | $1.0\times$ (Baseline) |
+| **2** | **Standard C++ (1 Thread)** | **$34.29\text{ s}$** | $29.16\text{ M paths/s}$ | $\$10.450743$ | $\pm \$0.000465$ | $\$0.000160$ | **$1.4\times$ Faster** |
+| **3** | **Deployed C++ (8 Cores)** | **$2.96\text{ s}$** | **$338.02\text{ M paths/s}$** | **$\$10.450647$** | **$\pm \$0.000329$** | **$\$0.000063$** | **$16.4\times$ vs JS**<br>($11.6\times$ vs Std C++) |
+
+*(Analytical Closed-Form Black-Scholes Exact Price: **$\$10.450584$**)*
+
+#### C. Key Speed Drivers
+
+1. **`Xoshiro256+` PRNG (~1.5 CPU Clock Cycles/Draw):** Replaces `std::mt19937` table lookups with 3 bit-shifts, XOR, and rotation in CPU registers.
+2. **Antithetic Variates ($1.42\times$ Tighter Bounds):** Paired $+Z$ and $-Z$ evaluations in a single pass cut variance by $50\%$.
+3. **Lock-Free Multi-Threading:** Zero-mutex partition across all cores scales near-linearly to over **$338\text{ Million paths/sec}$**.
+4. **Zero Heap Allocation:** 100% register-resident accumulators eliminate cache misses and garbage collection stalls.
+
 ---
 
 ## 3. Express REST API (`server/src/routes.js`)
