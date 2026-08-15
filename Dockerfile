@@ -1,8 +1,8 @@
-# MonteCarloSuite — unified production image (API + React static + C++ engine)
+# MonteCarloSuite — unified production image (API + React static + C++ engine + Node-API Addon)
 # Render-compatible: respects PORT env, single web service.
 
 # ----------------------------
-# Stage 1: C++ engine
+# Stage 1: C++ engine & Node-API Addon
 # ----------------------------
 FROM node:22-bookworm AS cpp-builder
 
@@ -12,10 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app/server/cpp
-COPY server/cpp/ ./
+WORKDIR /app/server
+COPY server/package.json server/package-lock.json ./
+RUN npm ci
 
-RUN chmod +x build.sh && ./build.sh
+COPY server/cpp/ ./cpp/
+COPY server/build_addon.sh ./
+RUN chmod +x ./cpp/build.sh ./build_addon.sh && ./cpp/build.sh && ./build_addon.sh
 
 # ----------------------------
 # Stage 2: React client
@@ -49,12 +52,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --uid 1001 --gid nodeapp nodeapp
 
 COPY server/package.json server/package-lock.json ./
-# Skip postinstall C++ build — binary is copied from cpp-builder
+# Skip postinstall C++ build — binaries are copied from cpp-builder
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY server/ ./
 
 COPY --from=cpp-builder /app/server/cpp/monte_carlo ./cpp/monte_carlo
+COPY --from=cpp-builder /app/server/build/Release/monte_carlo_addon.node ./build/Release/monte_carlo_addon.node
 COPY --from=client-builder /app/client/build ./client/build
 
 RUN chmod +x ./cpp/monte_carlo && chown -R nodeapp:nodeapp /app

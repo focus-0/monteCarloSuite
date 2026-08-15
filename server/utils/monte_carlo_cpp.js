@@ -3,6 +3,25 @@ const path = require('path');
 const fs = require('fs');
 const config = require('../config');
 
+// Try loading native N-API in-process addon for zero-overhead execution
+let nativeAddon = null;
+const addonPaths = [
+  path.join(__dirname, '..', 'build', 'Release', 'monte_carlo_addon.node'),
+  path.join(__dirname, '..', 'cpp', 'build', 'Release', 'monte_carlo_addon.node'),
+  path.join(__dirname, '..', 'build', 'Debug', 'monte_carlo_addon.node')
+];
+
+for (const p of addonPaths) {
+  if (fs.existsSync(p)) {
+    try {
+      nativeAddon = require(p);
+      break;
+    } catch (e) {
+      // Fallback
+    }
+  }
+}
+
 const primaryPath = path.join(__dirname, '..', 'cpp', 'monte_carlo');
 const buildPath = path.join(__dirname, '..', 'cpp', 'build', 'monte_carlo');
 
@@ -13,12 +32,17 @@ function getExecutablePath() {
 }
 
 function isExecutableAvailable() {
+  if (nativeAddon) return true;
   try {
     const execPath = getExecutablePath();
     return fs.existsSync(execPath) && fs.accessSync(execPath, fs.constants.X_OK) === undefined;
   } catch (error) {
     return false;
   }
+}
+
+function isNativeAddonLoaded() {
+  return nativeAddon !== null;
 }
 
 function parseBool(val) {
@@ -73,7 +97,7 @@ function runCppProcess(args) {
           resolve(result);
         }
       } catch (error) {
-        reject(new Error(`Failed to parse C++ output: ${error.message}`));
+        reject(new Error(`Failed to parse C++ output: ${error.message}. Raw: ${stdoutData}`));
       }
     });
 
@@ -83,8 +107,36 @@ function runCppProcess(args) {
   });
 }
 
-function monteCarloBlackScholes(params) {
-  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, threads } = params;
+function calculateOptionPrice(params) {
+  const {
+    S0 = 100,
+    K = 100,
+    r = 0.05,
+    sigma = 0.2,
+    T = 1,
+    isCall = true,
+    numTrials = 100000,
+    threads
+  } = params;
+
+  if (nativeAddon && typeof nativeAddon.calculateOptionPrice === 'function') {
+    try {
+      const res = nativeAddon.calculateOptionPrice({
+        S0: Number(S0),
+        K: Number(K),
+        r: Number(r),
+        sigma: Number(sigma),
+        T: Number(T),
+        isCall: parseBool(isCall),
+        numTrials: Math.floor(Number(numTrials)),
+        threads: resolveThreads(threads)
+      });
+      return Promise.resolve(res);
+    } catch (e) {
+      // Fallback to CLI process
+    }
+  }
+
   const args = [
     Number(S0).toString(),
     Number(K).toString(),
@@ -93,14 +145,44 @@ function monteCarloBlackScholes(params) {
     Number(T).toString(),
     parseBool(isCall) ? '1' : '0',
     Math.floor(Number(numTrials)).toString(),
-    '0', // Mode 0 = European
+    '0',
     resolveThreads(threads).toString()
   ];
   return runCppProcess(args);
 }
 
-function monteCarloAsianOption(params) {
-  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, numSteps = 252, threads } = params;
+function calculateAsianOptionPrice(params) {
+  const {
+    S0 = 100,
+    K = 100,
+    r = 0.05,
+    sigma = 0.2,
+    T = 1,
+    isCall = true,
+    numTrials = 100000,
+    numSteps = 252,
+    threads
+  } = params;
+
+  if (nativeAddon && typeof nativeAddon.calculateAsianOptionPrice === 'function') {
+    try {
+      const res = nativeAddon.calculateAsianOptionPrice({
+        S0: Number(S0),
+        K: Number(K),
+        r: Number(r),
+        sigma: Number(sigma),
+        T: Number(T),
+        isCall: parseBool(isCall),
+        numTrials: Math.floor(Number(numTrials)),
+        numSteps: Math.floor(Number(numSteps)),
+        threads: resolveThreads(threads)
+      });
+      return Promise.resolve(res);
+    } catch (e) {
+      // Fallback to CLI process
+    }
+  }
+
   const args = [
     Number(S0).toString(),
     Number(K).toString(),
@@ -109,7 +191,7 @@ function monteCarloAsianOption(params) {
     Number(T).toString(),
     parseBool(isCall) ? '1' : '0',
     Math.floor(Number(numTrials)).toString(),
-    '2', // Mode 2 = Asian
+    '2',
     resolveThreads(threads).toString(),
     Math.floor(Number(numSteps)).toString()
   ];
@@ -117,7 +199,35 @@ function monteCarloAsianOption(params) {
 }
 
 function calculateGreeks(params) {
-  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, threads } = params;
+  const {
+    S0 = 100,
+    K = 100,
+    r = 0.05,
+    sigma = 0.2,
+    T = 1,
+    isCall = true,
+    numTrials = 100000,
+    threads
+  } = params;
+
+  if (nativeAddon && typeof nativeAddon.calculateGreeks === 'function') {
+    try {
+      const res = nativeAddon.calculateGreeks({
+        S0: Number(S0),
+        K: Number(K),
+        r: Number(r),
+        sigma: Number(sigma),
+        T: Number(T),
+        isCall: parseBool(isCall),
+        numTrials: Math.floor(Number(numTrials)),
+        threads: resolveThreads(threads)
+      });
+      return Promise.resolve(res);
+    } catch (e) {
+      // Fallback to CLI process
+    }
+  }
+
   const args = [
     Number(S0).toString(),
     Number(K).toString(),
@@ -126,7 +236,7 @@ function calculateGreeks(params) {
     Number(T).toString(),
     parseBool(isCall) ? '1' : '0',
     Math.floor(Number(numTrials)).toString(),
-    '3', // Mode 3 = Greeks
+    '3',
     resolveThreads(threads).toString()
   ];
   return runCppProcess(args);
@@ -134,15 +244,32 @@ function calculateGreeks(params) {
 
 function generatePricePaths(params) {
   const { S0 = 100, r = 0.05, sigma = 0.2, T = 1, numPaths = 50, numSteps = 100 } = params;
+
+  if (nativeAddon && typeof nativeAddon.generatePricePaths === 'function') {
+    try {
+      const res = nativeAddon.generatePricePaths({
+        S0: Number(S0),
+        r: Number(r),
+        sigma: Number(sigma),
+        T: Number(T),
+        numPaths: Math.floor(Number(numPaths)),
+        numSteps: Math.floor(Number(numSteps))
+      });
+      return Promise.resolve(res);
+    } catch (e) {
+      // Fallback to CLI process
+    }
+  }
+
   const args = [
     Number(S0).toString(),
-    '100', // K placeholder
+    '100',
     Number(r).toString(),
     Number(sigma).toString(),
     Number(T).toString(),
     '1',
     '1000',
-    '4', // Mode 4 = Paths
+    '4',
     Math.floor(Number(numPaths)).toString(),
     Math.floor(Number(numSteps)).toString()
   ];
@@ -164,6 +291,27 @@ function simulateDeltaHedging(params) {
     threads
   } = params;
 
+  if (nativeAddon && typeof nativeAddon.simulateDeltaHedging === 'function') {
+    try {
+      const res = nativeAddon.simulateDeltaHedging({
+        S0: Number(S0),
+        K: Number(K),
+        r: Number(r),
+        sigma: Number(sigma),
+        T: Number(T),
+        isCall: parseBool(isCall),
+        numTrials: Math.floor(Number(numTrials)),
+        numSteps: Math.floor(Number(numSteps)),
+        rebalanceFreq: Math.floor(Number(rebalanceFreq)),
+        txCostPct: Number(txCostPct),
+        threads: resolveThreads(threads)
+      });
+      return Promise.resolve(res);
+    } catch (e) {
+      // Fallback to CLI process
+    }
+  }
+
   const args = [
     Number(S0).toString(),
     Number(K).toString(),
@@ -172,7 +320,7 @@ function simulateDeltaHedging(params) {
     Number(T).toString(),
     parseBool(isCall) ? '1' : '0',
     Math.floor(Number(numTrials)).toString(),
-    '5', // Mode 5 = Delta-Hedging Simulator
+    '5',
     resolveThreads(threads).toString(),
     Math.floor(Number(numSteps)).toString(),
     Math.floor(Number(rebalanceFreq)).toString(),
@@ -182,10 +330,14 @@ function simulateDeltaHedging(params) {
 }
 
 module.exports = {
-  monteCarloBlackScholes,
-  monteCarloAsianOption,
+  calculateOptionPrice,
+  calculateAsianOptionPrice,
   calculateGreeks,
   generatePricePaths,
   simulateDeltaHedging,
-  isExecutableAvailable
+  monteCarloBlackScholes: calculateOptionPrice,
+  monteCarloAsianOption: calculateAsianOptionPrice,
+  isExecutableAvailable,
+  isNativeAddonLoaded,
+  getExecutablePath
 };
