@@ -22,7 +22,6 @@ function ConfigField({ label, children }) {
 }
 
 const ConfigBar = ({
-  activeTab,
   symbol,
   onSymbolChange,
   onMarketDataLoaded,
@@ -31,11 +30,7 @@ const ConfigBar = ({
   optionType,
   setOptionType,
   onRunSimulation,
-  simulationLoading,
-  hedgeParams,
-  onHedgeParamChange,
-  onRunHedge,
-  hedgeLoading
+  simulationLoading
 }) => {
   const [tickerLoading, setTickerLoading] = useState(false);
   const [tickerError, setTickerError] = useState(null);
@@ -43,11 +38,6 @@ const ConfigBar = ({
   const handleParamChange = (e) => {
     const { name, value, type, checked } = e.target;
     onParamChange(name, type === 'checkbox' ? checked : value);
-  };
-
-  const handleHedgeChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    onHedgeParamChange(name, type === 'checkbox' ? checked : value);
   };
 
   const applyPreset = (presetKey) => {
@@ -81,11 +71,9 @@ const ConfigBar = ({
     }
   };
 
-  const isSimulator = activeTab === 'simulator';
-
   return (
     <div className="config-bar">
-      <form className="config-bar-form" onSubmit={isSimulator ? onRunSimulation : onRunHedge}>
+      <form className="config-bar-form" onSubmit={onRunSimulation}>
         <div className="config-row config-row-ticker">
           <span className="config-row-label">Ticker</span>
           <div className="config-ticker-controls">
@@ -120,119 +108,61 @@ const ConfigBar = ({
         </div>
 
         <div className="config-row config-row-params">
-          {isSimulator ? (
-            <>
-              <ConfigField label="Style">
-                <select
-                  value={optionType}
-                  onChange={(e) => setOptionType(e.target.value)}
-                  className="form-control config-input"
-                >
-                  <option value="european">European</option>
-                  <option value="asian">Asian</option>
-                </select>
-              </ConfigField>
-              <ConfigField label="Type">
-                <select
-                  name="isCall"
-                  value={params.isCall ? 'true' : 'false'}
-                  onChange={handleParamChange}
-                  className="form-control config-input"
-                >
-                  <option value="true">Call</option>
-                  <option value="false">Put</option>
-                </select>
-              </ConfigField>
-              <ConfigField label="S₀">
-                <input type="number" name="S0" step="0.01" value={params.S0} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="K">
-                <input type="number" name="K" step="0.01" value={params.K} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="σ">
-                <input type="number" name="sigma" step="0.001" value={params.sigma} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="r">
-                <input type="number" name="r" step="0.001" value={params.r} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="T (yr)">
-                <input type="number" name="T" step="0.01" value={params.T} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="Trials">
-                <select name="numTrials" value={params.numTrials} onChange={handleParamChange} className="form-control config-input">
-                  <option value={10000}>10,000</option>
-                  <option value={100000}>100,000</option>
-                  <option value={1000000}>1,000,000</option>
-                  <option value={5000000}>5,000,000</option>
-                </select>
-              </ConfigField>
-            </>
-          ) : (
-            <>
-              <ConfigField label="S₀">
-                <input type="number" name="S0" step="0.01" value={params.S0} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="K">
-                <input type="number" name="K" step="0.01" value={params.K} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="σ">
-                <input type="number" name="sigma" step="0.001" value={params.sigma} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="r">
-                <input type="number" name="r" step="0.001" value={params.r} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="T (yr)">
-                <input type="number" name="T" step="0.01" value={params.T} onChange={handleParamChange} className="form-control config-input" required />
-              </ConfigField>
-              <ConfigField label="Type">
-                <select
-                  name="isCall"
-                  value={params.isCall ? 'true' : 'false'}
-                  onChange={handleParamChange}
-                  className="form-control config-input"
-                >
-                  <option value="true">Call</option>
-                  <option value="false">Put</option>
-                </select>
-              </ConfigField>
-              <ConfigField label="Paths">
-                <select name="numTrials" value={hedgeParams.numTrials} onChange={handleHedgeChange} className="form-control config-input">
-                  <option value={1000}>1,000</option>
-                  <option value={5000}>5,000</option>
-                  <option value={10000}>10,000</option>
-                </select>
-              </ConfigField>
-              <ConfigField label="Rebalance">
-                <select name="rebalanceFreq" value={hedgeParams.rebalanceFreq} onChange={handleHedgeChange} className="form-control config-input">
-                  <option value={1}>Daily</option>
-                  <option value={5}>Weekly</option>
-                </select>
-              </ConfigField>
-              <ConfigField label="Tx cost (bps)">
-                <select name="txCostPct" value={hedgeParams.txCostPct} onChange={handleHedgeChange} className="form-control config-input">
-                  <option value={0.0}>0</option>
-                  <option value={0.0005}>5</option>
-                  <option value={0.001}>10</option>
-                  <option value={0.0025}>25</option>
-                </select>
-              </ConfigField>
-            </>
-          )}
+          <ConfigField label="Style">
+            <select
+              value={optionType}
+              onChange={(e) => setOptionType(e.target.value)}
+              className="form-control config-input"
+            >
+              <option value="european">European</option>
+              <option value="asian">Asian</option>
+            </select>
+          </ConfigField>
+          <ConfigField label="Type">
+            <select
+              name="isCall"
+              value={params.isCall ? 'true' : 'false'}
+              onChange={handleParamChange}
+              className="form-control config-input"
+            >
+              <option value="true">Call</option>
+              <option value="false">Put</option>
+            </select>
+          </ConfigField>
+          <ConfigField label="S₀">
+            <input type="number" name="S0" step="0.01" value={params.S0} onChange={handleParamChange} className="form-control config-input" required />
+          </ConfigField>
+          <ConfigField label="K">
+            <input type="number" name="K" step="0.01" value={params.K} onChange={handleParamChange} className="form-control config-input" required />
+          </ConfigField>
+          <ConfigField label="σ">
+            <input type="number" name="sigma" step="0.001" value={params.sigma} onChange={handleParamChange} className="form-control config-input" required />
+          </ConfigField>
+          <ConfigField label="r">
+            <input type="number" name="r" step="0.001" value={params.r} onChange={handleParamChange} className="form-control config-input" required />
+          </ConfigField>
+          <ConfigField label="T (yr)">
+            <input type="number" name="T" step="0.01" value={params.T} onChange={handleParamChange} className="form-control config-input" required />
+          </ConfigField>
+          <ConfigField label="Trials">
+            <select name="numTrials" value={params.numTrials} onChange={handleParamChange} className="form-control config-input">
+              <option value={10000}>10,000</option>
+              <option value={100000}>100,000</option>
+              <option value={1000000}>1,000,000</option>
+              <option value={5000000}>5,000,000</option>
+            </select>
+          </ConfigField>
         </div>
 
         <div className="config-row config-row-actions">
           <button
             type="submit"
             className="btn btn-primary config-run-btn"
-            disabled={isSimulator ? simulationLoading : hedgeLoading}
+            disabled={simulationLoading}
           >
-            {isSimulator
-              ? simulationLoading
-                ? 'Running simulation…'
-                : 'Run Monte Carlo Simulation'
-              : hedgeLoading
-                ? 'Running hedge…'
-                : 'Run Delta-Hedging Simulation'}
+            {simulationLoading
+              ? 'Running simulation…'
+              : 'Run Monte Carlo Simulation'}
           </button>
         </div>
       </form>

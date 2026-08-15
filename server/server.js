@@ -74,7 +74,7 @@ if (fs.existsSync(clientIndexPath)) {
   console.log(`Serving React client from ${clientBuildPath}`);
 } else {
   app.get('/', (req, res) => {
-    res.send('Monte Carlo Suite API is live 🚀');
+    res.send('Monte Carlo Suite API is live');
   });
 }
 

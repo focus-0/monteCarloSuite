@@ -32,7 +32,6 @@ const BlackScholes = () => {
   const [hedgeError, setHedgeError] = useState(null);
 
   const [optionType, setOptionType] = useState('european');
-  const [activeTab, setActiveTab] = useState('simulator');
   const [resultSubView, setResultSubView] = useState('results');
 
   const [cppResult, setCppResult] = useState(null);
@@ -87,7 +86,7 @@ const BlackScholes = () => {
     if (!cppResult && !hedgeResult) return;
     setSaveStatus('saving');
 
-    const isHedge = activeTab === 'delta-hedge';
+    const isHedge = resultSubView === 'delta-hedge';
     const payload = {
       simulationType: isHedge ? 'delta-hedge' : optionType,
       symbol: symbol || 'AAPL',
@@ -260,10 +259,10 @@ const BlackScholes = () => {
       if (historyItem.simulationType) {
         const type = historyItem.simulationType.toLowerCase();
         if (type === 'delta-hedge') {
-          setActiveTab('delta-hedge');
+          setResultSubView('delta-hedge');
         } else {
           setOptionType(type === 'black-scholes' ? 'european' : type === 'asian' ? 'asian' : type);
-          setActiveTab('simulator');
+          setResultSubView('results');
         }
       }
       setShowHistoryModal(false);
@@ -302,35 +301,29 @@ const BlackScholes = () => {
               style={{
                 fontSize: '0.78rem',
                 color: dbStatus?.connected ? '#4ade80' : '#64748b',
-                background: dbStatus?.connected ? 'rgba(34, 197, 94, 0.1)' : '#0f172a',
-                border: `1px solid ${dbStatus?.connected ? '#16a34a' : '#1e293b'}`,
+                background: dbStatus?.connected ? 'rgba(34, 197, 94, 0.1)' : '#000000',
+                border: `1px solid ${dbStatus?.connected ? '#16a34a' : '#18181b'}`,
                 padding: '3px 8px',
                 borderRadius: '12px',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '5px'
+                gap: '6px'
               }}
               title={dbStatus?.connected ? `Connected to MongoDB (${dbStatus.dbName})` : 'MongoDB offline'}
             >
-              <span style={{ fontSize: '0.6rem' }}>{dbStatus?.connected ? '●' : '○'}</span>
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  backgroundColor: dbStatus?.connected ? '#4ade80' : '#64748b',
+                  display: 'inline-block'
+                }}
+              />
               MongoDB: {dbStatus?.connected ? 'Online' : 'Offline'}
             </span>
           </div>
 
-          <div className="nav-tabs">
-            <button
-              className={`tab-btn ${activeTab === 'simulator' ? 'active' : ''}`}
-              onClick={() => setActiveTab('simulator')}
-            >
-              Option Simulator
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'delta-hedge' ? 'active' : ''}`}
-              onClick={() => setActiveTab('delta-hedge')}
-            >
-              Delta-Hedge Simulator
-            </button>
-          </div>
           <div className="nav-menu-wrap" ref={navMenuRef}>
             <button
               className="nav-menu-btn"
@@ -354,7 +347,6 @@ const BlackScholes = () => {
       {error && <div className="error-banner global-error">{error}</div>}
 
       <ConfigBar
-        activeTab={activeTab}
         symbol={symbol}
         onSymbolChange={setSymbol}
         onMarketDataLoaded={handleMarketDataLoaded}
@@ -364,144 +356,131 @@ const BlackScholes = () => {
         setOptionType={setOptionType}
         onRunSimulation={handleRunSimulation}
         simulationLoading={loading}
-        hedgeParams={hedgeParams}
-        onHedgeParamChange={handleHedgeParamChange}
-        onRunHedge={handleRunHedge}
-        hedgeLoading={hedgeLoading}
       />
 
       <div className="dashboard-content">
-        {activeTab === 'simulator' && (
-          <div className="single-col">
-            <div className="subview-pills" style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: '#050811', padding: '6px', borderRadius: '8px', border: '1px solid #1e293b', flexWrap: 'wrap', alignItems: 'center' }}>
-                <button
-                  className={`tab-btn ${resultSubView === 'results' ? 'active' : ''}`}
-                  onClick={() => handleSubViewChange('results')}
-                  style={{ fontSize: '0.85rem', padding: '6px 12px' }}
-                >
-                  Fair Value & Greeks
-                </button>
-                <button
-                  className={`tab-btn ${resultSubView === 'paths' ? 'active' : ''}`}
-                  onClick={() => handleSubViewChange('paths')}
-                  style={{ fontSize: '0.85rem', padding: '6px 12px' }}
-                >
-                  Trajectories & Accuracy
-                </button>
-                <button
-                  className={`tab-btn ${resultSubView === 'agent' ? 'active' : ''}`}
-                  onClick={() => handleSubViewChange('agent')}
-                  style={{ fontSize: '0.85rem', padding: '6px 12px', position: 'relative' }}
-                >
-                  AI Risk Analyst
-                  {showAgentHint && resultSubView !== 'agent' && (
-                    <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#60a5fa', fontWeight: 600 }}>← try this</span>
-                  )}
-                </button>
+        <div className="single-col">
+          {/* 4 Navigation Tabs in the Main Panel */}
+          <div className="subview-pills">
+            <button
+              className={`tab-btn ${resultSubView === 'results' ? 'active' : ''}`}
+              onClick={() => handleSubViewChange('results')}
+              style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+            >
+              Option Valuation & Greeks
+            </button>
 
-                {/* Save to MongoDB action button */}
-                {cppResult && (
-                  <button
-                    className="btn btn-xs"
-                    onClick={handleSaveToHistory}
-                    disabled={saveStatus === 'saving'}
-                    style={{
-                      marginLeft: 'auto',
-                      background: saveStatus === 'saved' ? '#15803d' : '#1e293b',
-                      border: `1px solid ${saveStatus === 'saved' ? '#22c55e' : '#334155'}`,
-                      color: saveStatus === 'saved' ? '#ffffff' : '#38bdf8',
-                      fontSize: '0.8rem',
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {saveStatus === 'saving'
-                      ? 'Saving…'
-                      : saveStatus === 'saved'
-                        ? '✓ Saved to DB'
-                        : saveStatus === 'error'
-                          ? '⚠ Save Failed (DB offline)'
-                          : '💾 Save Run to MongoDB'}
-                  </button>
-                )}
+            <button
+              className={`tab-btn ${resultSubView === 'paths' ? 'active' : ''}`}
+              onClick={() => handleSubViewChange('paths')}
+              style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+            >
+              Stochastic Paths & Convergence
+            </button>
+
+            <button
+              className={`tab-btn ${resultSubView === 'delta-hedge' ? 'active' : ''}`}
+              onClick={() => handleSubViewChange('delta-hedge')}
+              style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+            >
+              Dynamic Delta Hedging
+            </button>
+
+            <button
+              className={`tab-btn ${resultSubView === 'agent' ? 'active' : ''}`}
+              onClick={() => handleSubViewChange('agent')}
+              style={{ fontSize: '0.85rem', padding: '6px 14px', position: 'relative' }}
+            >
+              AI Quant Copilot
+              {showAgentHint && resultSubView !== 'agent' && (
+                <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#60a5fa', fontWeight: 600 }}>← promptable</span>
+              )}
+            </button>
+
+            {/* Save to MongoDB action button for single simulation */}
+            {cppResult && resultSubView !== 'delta-hedge' && (
+              <button
+                className="btn btn-xs"
+                onClick={handleSaveToHistory}
+                disabled={saveStatus === 'saving'}
+                style={{
+                  marginLeft: 'auto',
+                  background: saveStatus === 'saved' ? '#15803d' : '#1e293b',
+                  border: `1px solid ${saveStatus === 'saved' ? '#22c55e' : '#334155'}`,
+                  color: saveStatus === 'saved' ? '#ffffff' : '#38bdf8',
+                  fontSize: '0.8rem',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                {saveStatus === 'saving'
+                  ? 'Saving…'
+                  : saveStatus === 'saved'
+                    ? 'Saved to DB'
+                    : saveStatus === 'error'
+                      ? 'Save Failed (DB offline)'
+                      : 'Save Run to MongoDB'}
+              </button>
+            )}
+          </div>
+
+          {/* TAB 1: Option Valuation & Greeks */}
+          {resultSubView === 'results' && (
+            cppResult ? (
+              <ResultsPanel
+                cppResult={cppResult}
+                jsResult={jsResult}
+                greeksResult={greeksResult}
+                optionType={optionType}
+              />
+            ) : (
+              <div className="card placeholder-card">
+                <h3>Ready to Run Simulation</h3>
+                <p>Configure parameters in the bar above, then click <strong>Run Monte Carlo Simulation</strong>.</p>
               </div>
+            )
+          )}
 
-              {resultSubView === 'results' && (
-                cppResult ? (
-                  <ResultsPanel
-                    cppResult={cppResult}
-                    jsResult={jsResult}
-                    greeksResult={greeksResult}
-                    optionType={optionType}
-                  />
-                ) : (
-                  <div className="card placeholder-card">
-                    <h3>Ready to Run Simulation</h3>
-                    <p>Configure parameters in the bar above, then click <strong>Run Simulation</strong>.</p>
-                  </div>
-                )
-              )}
+          {/* TAB 2: Stochastic Paths & Convergence */}
+          {resultSubView === 'paths' && (
+            cppResult ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <PricePathsChart pathsData={pathsData} strikePrice={params.K} />
+                <ConvergenceChart convergenceData={convergenceData} />
+              </div>
+            ) : (
+              <div className="card placeholder-card">
+                <h3>Run a Simulation First</h3>
+                <p>Price trajectories and convergence charts appear after you run a simulation.</p>
+              </div>
+            )
+          )}
 
-              {resultSubView === 'paths' && (
-                cppResult ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    <PricePathsChart pathsData={pathsData} strikePrice={params.K} />
-                    <ConvergenceChart convergenceData={convergenceData} />
-                  </div>
-                ) : (
-                  <div className="card placeholder-card">
-                    <h3>Run a Simulation First</h3>
-                    <p>Price trajectories and convergence charts appear after you run a simulation.</p>
-                  </div>
-                )
-              )}
+          {/* TAB 3: Dynamic Delta Hedging */}
+          {resultSubView === 'delta-hedge' && (
+            <DeltaHedgeSimulator
+              result={hedgeResult}
+              loading={hedgeLoading}
+              error={hedgeError}
+              hedgeParams={hedgeParams}
+              onHedgeParamChange={handleHedgeParamChange}
+              onRunHedge={handleRunHedge}
+              baseParams={params}
+              saveStatus={saveStatus}
+              onSaveToHistory={handleSaveToHistory}
+            />
+          )}
 
-              {resultSubView === 'agent' && (
-                cppResult ? (
-                  <QuantAgentPanel simulationParams={params} symbol={symbol} />
-                ) : (
-                  <div className="card placeholder-card">
-                    <h3>Run a Simulation First</h3>
-                    <p>The AI Risk Analyst needs simulation parameters from a completed run.</p>
-                  </div>
-                )
-              )}
+          {/* TAB 4: AI Quant Copilot */}
+          {resultSubView === 'agent' && (
+            <QuantAgentPanel
+              simulationParams={params}
+              symbol={symbol}
+            />
+          )}
 
-          </div>
-        )}
-
-        {activeTab === 'delta-hedge' && (
-          <div className="single-col">
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
-              {hedgeResult && (
-                <button
-                  className="btn btn-xs"
-                  onClick={handleSaveToHistory}
-                  disabled={saveStatus === 'saving'}
-                  style={{
-                    background: saveStatus === 'saved' ? '#15803d' : '#1e293b',
-                    border: `1px solid ${saveStatus === 'saved' ? '#22c55e' : '#334155'}`,
-                    color: saveStatus === 'saved' ? '#ffffff' : '#38bdf8',
-                    fontSize: '0.8rem',
-                    padding: '4px 10px',
-                    borderRadius: '6px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {saveStatus === 'saving'
-                    ? 'Saving…'
-                    : saveStatus === 'saved'
-                      ? '✓ Saved to DB'
-                      : saveStatus === 'error'
-                        ? '⚠ Save Failed (DB offline)'
-                        : '💾 Save Hedge to MongoDB'}
-                </button>
-              )}
-            </div>
-            <DeltaHedgeSimulator result={hedgeResult} loading={hedgeLoading} error={hedgeError} />
-          </div>
-        )}
+        </div>
       </div>
 
       {showHistoryModal && (

@@ -183,52 +183,20 @@ News articles include `pubDateIso`, `pubDateFormatted`, `ageMinutes`, and wall-c
 
 The options chain endpoint returns nearest-expiry calls and puts with implied vol.
 
-### 3.4 AI Risk Audit
+### 3.4 AI Risk Copilot & Streaming
 
 | Method | Path | Description |
 | :--- | :--- | :--- |
-| `POST` | `/api/agent/analyze` | C++ pricing + Greeks, then LLM risk summary (Ollama, Gemini, or Groq) |
+| `POST` | `/api/agent/stream` | **Primary interactive streaming endpoint** (SSE): computes C++ math, pre-fetches Google News, and streams tokens with custom trader directives (`customPrompt`) |
+| `POST` | `/api/agent/analyze` | Non-streaming batch risk audit returning structured JSON (`recommendation`, `impactAnalysis`, `comparison`, `marketNews`, `gemmaText`) |
 
-Computes European, Asian, and Greeks in C++, **fetches live Google News RSS headlines** for the request `symbol` (default `AAPL`), builds a structured prompt including those headlines, and invokes `runQuantAgent` with `skipTools: true` so the model uses embedded data on the first pass. The LLM responds with structured JSON `{"recommendation":"BUY|SELL|HOLD","reasoning":"..."}`. Tools are available only for follow-up requests with different symbols or parameters. The **exact messages, tool schemas, and multi-turn expansion** sent to the LLM are documented in **§4.4**.
+### 3.5 Model Context Protocol (MCP) HTTP Endpoint
 
-**Request body** adds optional `symbol` (ticker string, e.g. `"NVDA"`). Other fields match pricing endpoints:
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/mcp` | Standard JSON-RPC 2.0 endpoint dispatching to all 8 quantitative MCP tools over HTTP |
 
-```json
-{ "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 100000, "symbol": "AAPL" }
-```
-
-```json
-// Response (abbreviated)
-{
-  "recommendation": "HOLD",
-  "recommendationColor": "warning",
-  "consistencyCheck": { "passed": true, "flags": [] },
-  "validationWarning": false,
-  "impactAnalysis": ["...", "...", "..."],
-  "comparison": { "europeanPrice": 10.45, "asianPrice": 5.68, "discountPct": "45.6%" },
-  "marketNews": {
-    "symbol": "AAPL",
-    "dataSource": "live_google_news_rss",
-    "fetchedAt": "2026-08-12T14:00:00.000Z",
-    "fetchedAtDisplay": "...",
-    "articles": [{ "title": "...", "source": "...", "pubDateIso": "...", "pubDateFormatted": "..." }]
-  },
-  "gemmaText": "...",
-  "executedToolCalls": [],
-  "benchmarkStats": {
-    "cppTimeMs": 130.2,
-    "llmTimeSec": 180.5,
-    "tokensPerSec": 5.2,
-    "modelName": "gemma4:12b"
-  }
-}
-```
-
-Locally requires **Ollama** with `gemma4:12b` (`LLM_PROVIDER=ollama` in `server/.env`). On Docker/Render, use **Gemini** (`LLM_PROVIDER=gemini` + `GEMINI_API_KEY`) — Ollama is not available. Falls back to rule-based text if the LLM is unreachable or misconfigured.
-
-> **Latency note:** Local `gemma4:12b` on `/api/agent/analyze` commonly takes **1–5+ minutes** wall time (`llmTimeSec` in `benchmarkStats`). Gemini on deploy is much faster. The analyze route skips tools on call #1 to avoid redundant second inference passes.
-
-### 3.5 Simulation History (MongoDB)
+### 3.6 Simulation History (MongoDB)
 
 | Method | Path | Description |
 | :--- | :--- | :--- |
@@ -427,33 +395,36 @@ If the model answers without tools (common), there is **only one** LLM call.
 
 ## 5. MCP Server (`server/mcp_server.js`)
 
-Standalone **JSON-RPC 2.0 over stdio** process — separate from both the Express app and the HTTP LLM client in `quant_agent.js` (which routes through `llm_provider.js` for Ollama, Gemini, or Groq). Compatible with Claude Desktop, Cursor, and the Python agents in `examples/agent/`.
+Provides standardized quantitative tools via **JSON-RPC 2.0** over both **stdio** (CLI / Claude Desktop / Cursor / Python agents) and **HTTP** (`POST /api/mcp`).
 
 ```bash
+# Stdio mode:
 node server/mcp_server.js
+
+# HTTP mode (dispatched automatically by Express routes):
+curl -X POST http://localhost:5001/api/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"simulate_monte_carlo","arguments":{"S0":100,"K":100,"r":0.05,"sigma":0.2,"T":1,"isCall":true,"numTrials":100000}}}'
 ```
 
-### 5.1 Tools
+### 5.1 Standardized Quantitative Tools
 
-| Tool | Maps To |
-| :--- | :--- |
-| `price_european_option` | `calculateOptionPrice` |
-| `price_asian_option` | `calculateAsianOptionPrice` |
-| `calculate_greeks` | `calculateGreeks` |
-| `simulate_delta_hedging` | `simulateDeltaHedging` |
-| `run_benchmark` | C++ vs JS latency comparison |
+| Tool | Description | Underlying Engine |
+| :--- | :--- | :--- |
+| `simulate_monte_carlo` | European pricing with Antithetic Variates & analytical comparison | Native C++ (`Mode 0`) |
+| `price_asian_option` | Arithmetic average path pricing | Native C++ (`Mode 2`) |
+| `calculate_greeks` | CRN finite-difference Greeks ($\Delta, \Gamma, \mathcal{V}, \Theta, \rho$) | Native C++ (`Mode 3`) |
+| `simulate_delta_hedging` | Discrete dynamic hedging replication with friction & VaR/CVaR | Native C++ (`Mode 5`) |
+| `run_benchmark` | C++ vs JS latency and throughput benchmark | C++ vs JS engine |
+| `get_market_news` | Live Google News RSS headlines with ISO 8601 timestamps | RSS parser |
+| `get_simulation_history` | Query persisted runs from MongoDB | MongoDB |
+| `save_simulation_history` | Persist simulation parameters & results to MongoDB | MongoDB |
 
 ### 5.2 Protocol Methods
 
-- `initialize` — handshake
-- `tools/list` — enumerate tools
-- `tools/call` — invoke a tool
-
-Example:
-
-```json
-{ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "calculate_greeks", "arguments": { "S0": 100, "K": 100, "r": 0.05, "sigma": 0.20, "T": 1.0, "isCall": true, "numTrials": 100000 } } }
-```
+- `initialize` — MCP protocol handshake and capability negotiation
+- `tools/list` — Enumerate available quantitative tools and JSON schemas
+- `tools/call` — Execute a tool with typed JSON arguments
 
 ---
 
@@ -656,43 +627,37 @@ Local dev UI: **http://localhost:3000** (proxies `/api` → `:5001` via `client/
 ### 10.1 Layout
 
 | Area | Component | Role |
-| :--- | :--- | :--- |
-| Top nav | `BlackScholes.js` | Tabs: **Option Simulator**, **Delta-Hedge Simulator**; history modal |
-| Config panel | `ConfigBar.js` | All inputs in one top card (wraps on narrow screens — no horizontal scroll) |
-| Results | `ResultsPanel.js`, charts | C++ vs JS pricing, Greeks, paths, convergence |
-| AI audit | `QuantAgentPanel.js` | Calls `POST /api/agent/analyze` with params + selected ticker `symbol` |
+### 10.1 Architecture & Layout
 
-### 10.2 Config panel (`ConfigBar.js`)
+The frontend features a high-contrast OLED Pitch Black (`#000000`) theme with zero emoji clutter, elevated card surfaces (`#09090b`), and sharp `#27272a` borders. The main panel is structured into **4 institutional quantitative tabs**:
 
-Single rectangle under the nav, three rows:
+| Tab # | Name | Sub-view | Functionality |
+| :--- | :--- | :--- | :--- |
+| **1** | **Option Valuation & Greeks** | `'results'` | Multi-threaded fair value, confidence bounds, Black-Scholes analytical benchmarks, and full Greeks ($\Delta, \Gamma, \mathcal{V}, \Theta, \rho$). |
+| **2** | **Stochastic Paths & Convergence** | `'paths'` | GBM diffusion fan chart with tight dynamic auto-zoom, white **Mean Expected Path** overlay, and $\mathcal{O}(1/\sqrt{N})$ standard error convergence. |
+| **3** | **Dynamic Delta Hedging** | `'delta-hedge'` | Native C++ discrete replication over $N$ paths with transaction friction (bps), tracking error variance, and tail risk ($95\%$ VaR & CVaR). |
+| **4** | **AI Quant Copilot** | `'agent'` | Real-time streaming LLM risk synthesis (`POST /api/agent/stream`), interactive prompt bar with scenario presets, Greeks consistency checks, and Google News catalysts. No pre-run required. |
 
-1. **Ticker** — preset chips (AAPL, TSLA, …), symbol input, **Load quote** (Yahoo `/api/market/:ticker` or offline presets)
-2. **Parameters** — responsive grid; fields change by tab:
-   - *Option Simulator:* Style (European/Asian), Call/Put, S₀, K, σ, r, T, Trials
-   - *Delta-Hedge:* S₀, K, σ, r, T, Call/Put, Paths, Rebalance, Tx cost (bps)
-3. **Run** — *Run Monte Carlo Simulation* or *Run Delta-Hedging Simulation*
+### 10.2 Config Panel (`ConfigBar.js`)
 
-Ticker selection flows into **AI Risk Audit** as the `symbol` sent to `/api/agent/analyze`.
+A clean parameter bar located at the top of the interface:
 
-### 10.3 Option Simulator sub-views
+1. **Ticker Selection** — Preset chips (AAPL, MSFT, NVDA, TSLA, SPY, QQQ), custom symbol input, and instant market data loading.
+2. **Contract Parameters** — Responsive grid for Style (European / Asian), Option Type (Call / Put), Spot Price ($S_0$), Strike ($K$), Volatility ($\sigma$), Risk-free Rate ($r$), Expiry ($T$), and Trial Count ($N$).
+3. **Execution** — One-click multi-threaded C++ simulation execution.
 
-| Sub-view | Content |
-| :--- | :--- |
-| Fair Value & Greeks | `ResultsPanel` after C++ run |
-| Trajectories & Accuracy | Price paths + convergence charts |
-| AI Risk Analyst | Five sections: (0) Greeks consistency check (pass/warning panel); (1) Impact & Sensitivity Audit; (2) European vs Asian path discount; (3) Live Market News; (4) Plain-English Agent Advice (`gemmaText` shows JSON `reasoning`). Header shows active LLM provider/model from `/api/implementation-status`. |
-
-### 10.4 Key client files
+### 10.3 Key Client Files
 
 | File | Role |
 | :--- | :--- |
-| `client/src/apiConfig.js` | `API_BASE_URL` from `REACT_APP_API_URL` |
-| `client/src/setupProxy.js` | Dev-only `/api` proxy to backend |
-| `client/src/components/BlackScholes.js` | Main dashboard shell |
-| `client/src/components/ConfigBar.js` | Unified config panel |
-| `client/src/components/QuantAgentPanel.js` | AI audit UI + what-if buttons |
-
-Legacy components `ParameterForm.js` and `TickerLookup.js` remain in the repo but are superseded by `ConfigBar.js`.
+| `client/src/components/BlackScholes.js` | Main dashboard shell and tab router |
+| `client/src/components/ConfigBar.js` | Unified top parameter configuration bar |
+| `client/src/components/ResultsPanel.js` | Fair value readout, Greeks grid, and C++ vs JS benchmark strip |
+| `client/src/components/DeltaHedgeSimulator.js` | Dynamic replication simulator, VaR/CVaR cards, and P&L distribution histogram |
+| `client/src/components/QuantAgentPanel.js` | Interactive promptable Copilot UI with SSE token stream and scenario presets |
+| `client/src/components/charts/PricePathsChart.js` | Auto-zoomed GBM price trajectory fan chart with mean path |
+| `client/src/components/charts/ConvergenceChart.js` | $\mathcal{O}(1/\sqrt{N})$ standard error decay curve |
+| `client/src/components/HistoryTable.js` | MongoDB simulation history modal |
 
 ---
 

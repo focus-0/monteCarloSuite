@@ -16,30 +16,69 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, T
 const PricePathsChart = ({ pathsData, strikePrice }) => {
   if (!pathsData || !pathsData.paths || pathsData.paths.length === 0) return null;
 
-  const steps = pathsData.numSteps || 100;
-  const labels = Array.from({ length: steps + 1 }, (_, i) => `Step ${i}`);
+  const paths = pathsData.paths;
+  const numSteps = paths[0].length - 1 || pathsData.numSteps || 100;
+  const labels = Array.from({ length: numSteps + 1 }, (_, i) => `t = ${(i / numSteps).toFixed(2)}`);
+
+  // Calculate Mean Path across all trajectories
+  const meanPath = new Array(numSteps + 1).fill(0);
+  paths.forEach((path) => {
+    path.forEach((val, stepIdx) => {
+      meanPath[stepIdx] += val / paths.length;
+    });
+  });
+
+  // Calculate dynamic zoomed Y-axis bounds (1st to 99th percentile to avoid outlier distortion)
+  const allValues = [];
+  paths.slice(0, 40).forEach((path) => {
+    path.forEach((val) => allValues.push(val));
+  });
+  if (strikePrice) allValues.push(Number(strikePrice));
+
+  allValues.sort((a, b) => a - b);
+  const p1 = allValues[Math.floor(allValues.length * 0.01)] || allValues[0];
+  const p99 = allValues[Math.floor(allValues.length * 0.99)] || allValues[allValues.length - 1];
+  const padding = (p99 - p1) * 0.06 || 5;
+
+  const yMin = Math.max(0, Math.floor(p1 - padding));
+  const yMax = Math.ceil(p99 + padding);
 
   const colors = [
-    '#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#84cc16'
+    '#38bdf8', '#818cf8', '#34d399', '#f472b6', '#fbbf24',
+    '#60a5fa', '#a78bfa', '#4ade80', '#fb7185', '#38bdf8'
   ];
 
-  const datasets = pathsData.paths.slice(0, 35).map((path, idx) => ({
+  // Map individual sample paths with translucent colors
+  const datasets = paths.slice(0, 35).map((path, idx) => ({
     label: `Path ${idx + 1}`,
     data: path,
-    borderColor: colors[idx % colors.length] + '80', // semi-transparent
+    borderColor: colors[idx % colors.length] + '55', // semi-transparent glow
     borderWidth: 1.2,
     pointRadius: 0,
-    tension: 0.1
+    tension: 0.15
   }));
 
+  // Add highlighted Mean Expected Path
+  datasets.push({
+    label: `Mean Expected Path ($${meanPath[numSteps].toFixed(2)})`,
+    data: meanPath,
+    borderColor: '#ffffff',
+    borderWidth: 2.2,
+    pointRadius: 0,
+    tension: 0.15,
+    order: 0
+  });
+
+  // Add Strike Price Reference Line
   if (strikePrice) {
     datasets.push({
-      label: `Strike (K = $${strikePrice})`,
-      data: Array(steps + 1).fill(strikePrice),
+      label: `Strike Price (K = $${strikePrice})`,
+      data: Array(numSteps + 1).fill(strikePrice),
       borderColor: '#ef4444',
       borderWidth: 2,
-      borderDash: [6, 6],
-      pointRadius: 0
+      borderDash: [6, 4],
+      pointRadius: 0,
+      order: 1
     });
   }
 
@@ -49,24 +88,44 @@ const PricePathsChart = ({ pathsData, strikePrice }) => {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: { display: false },
-      title: {
+      legend: {
         display: true,
-        text: `Simulated Stock Price Trajectories (50 Sample Geometric Brownian Motion Paths)`,
-        color: '#94a3b8',
-        font: { size: 14, family: 'Inter' }
+        position: 'top',
+        labels: {
+          color: '#cbd5e1',
+          font: { size: 11, family: 'Inter' },
+          filter: (item) => item.text && (item.text.includes('Mean') || item.text.includes('Strike'))
+        }
+      },
+      tooltip: {
+        mode: 'nearest',
+        intersect: false,
+        backgroundColor: '#09090b',
+        titleColor: '#60a5fa',
+        bodyColor: '#ffffff',
+        borderColor: '#27272a',
+        borderWidth: 1,
+        padding: 10,
+        callbacks: {
+          label: (context) => `${context.dataset.label}: $${Number(context.raw).toFixed(2)}`
+        }
       }
     },
     scales: {
       y: {
-        title: { display: true, text: 'Stock Price ($)', color: '#94a3b8' },
-        ticks: { color: '#94a3b8' },
-        grid: { color: 'rgba(255, 255, 255, 0.06)' }
+        min: yMin,
+        max: yMax,
+        title: { display: true, text: 'Stock Price ($)', color: '#cbd5e1', font: { size: 12, weight: 600 } },
+        ticks: {
+          color: '#cbd5e1',
+          callback: (value) => `$${value.toFixed(0)}`
+        },
+        grid: { color: 'rgba(255, 255, 255, 0.07)' }
       },
       x: {
-        title: { display: true, text: 'Time Step (0 to T)', color: '#94a3b8' },
-        ticks: { color: '#94a3b8', maxTicksLimit: 10 },
-        grid: { display: false }
+        title: { display: true, text: 'Time to Maturity (0 to T)', color: '#cbd5e1', font: { size: 12, weight: 600 } },
+        ticks: { color: '#cbd5e1', maxTicksLimit: 11 },
+        grid: { color: 'rgba(255, 255, 255, 0.04)' }
       }
     }
   };
@@ -74,10 +133,15 @@ const PricePathsChart = ({ pathsData, strikePrice }) => {
   return (
     <div className="card chart-card">
       <div className="card-header-row">
-        <h3 className="card-title">Stock Price Trajectories</h3>
-        <span className="badge badge-info">{pathsData.paths.length} Sample Paths</span>
+        <div>
+          <h3 className="card-title" style={{ margin: 0 }}>Stochastic Stock Price Trajectories</h3>
+          <span className="subtitle">
+            Geometric Brownian Motion (GBM) diffusion paths with Antithetic Variates
+          </span>
+        </div>
+        <span className="badge badge-info">{pathsData.paths.length} Simulated Paths</span>
       </div>
-      <div className="chart-container">
+      <div className="chart-container" style={{ height: '420px', width: '100%', marginTop: '10px' }}>
         <Line data={data} options={options} />
       </div>
     </div>

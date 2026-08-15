@@ -333,7 +333,7 @@ router.get('/api/market-news/:symbol', async (req, res) => {
 // LLM AI Agent Risk Audit endpoint (Ollama local or Groq cloud via llm_provider.js)
 router.post('/api/agent/analyze', sanitizeNumericInputs, async (req, res) => {
   try {
-    const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, symbol: rawSymbol } = req.body;
+    const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, symbol: rawSymbol, customPrompt } = req.body;
     const symbol = String(rawSymbol || config.defaultSymbol).trim().toUpperCase() || config.defaultSymbol;
     
     // 1. Calculate live dynamic C++ European price
@@ -364,7 +364,7 @@ router.post('/api/agent/analyze', sanitizeNumericInputs, async (req, res) => {
       : 'No recent headlines available.';
 
     const wallClockTime = new Date().toISOString();
-    const prompt = `You are a Senior Quantitative Risk Analyst. Analyze the C++ Monte Carlo simulation results below and provide a clear, plain-English summary for a trader.
+    let prompt = `You are a Senior Quantitative Risk Analyst. Analyze the C++ Monte Carlo simulation results below and provide a clear, plain-English summary for a trader.
 
 WALL-CLOCK TIME (analysis run): ${wallClockTime}
 
@@ -382,9 +382,13 @@ INSTRUCTIONS:
 1. Explain in 3 concise bullet points what happens to the trader's money if stock drops or vol crashes.
 2. Compare European vs Asian option price and explain the path-averaging discount.
 3. Note whether any headline above could affect vol or directional risk for this option.
-4. Give a final BUY, SELL, or HOLD risk recommendation with justification.
+4. Give a final BUY, SELL, or HOLD risk recommendation with justification.`;
 
-OUTPUT FORMAT: Respond with JSON only: {"recommendation":"BUY|SELL|HOLD","reasoning":"..."} — put your full analysis in reasoning.`;
+    if (customPrompt && typeof customPrompt === 'string' && customPrompt.trim()) {
+      prompt += `\n5. Specific Trader Query: "${customPrompt.trim()}". Answer this directly in your reasoning.`;
+    }
+
+    prompt += `\n\nOUTPUT FORMAT: Respond with JSON only: {"recommendation":"BUY|SELL|HOLD","reasoning":"..."} — put your full analysis in reasoning.`;
 
     let gemmaText = '';
     let llmTimeSec = null;
@@ -469,7 +473,7 @@ router.post('/api/agent/stream', sanitizeNumericInputs, async (req, res) => {
   };
 
   try {
-    const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, symbol: rawSymbol } = req.body;
+    const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, symbol: rawSymbol, customPrompt } = req.body;
     const symbol = String(rawSymbol || config.defaultSymbol).trim().toUpperCase() || config.defaultSymbol;
 
     // Fast C++ calculations
@@ -521,8 +525,7 @@ router.post('/api/agent/stream', sanitizeNumericInputs, async (req, res) => {
       }
     });
 
-    const wallClockTime = new Date().toISOString();
-    const prompt = `Trader Simulation Context:
+    let prompt = `Trader Simulation Context:
 - Option Style: ${isCall ? 'Call' : 'Put'}
 - Spot (S0): $${S0}, Strike (K): $${K}, Volatility (σ): ${(sigma * 100).toFixed(1)}%, Expiry: ${T} years
 - European Fair Value: $${eurPrice}
@@ -530,9 +533,13 @@ router.post('/api/agent/stream', sanitizeNumericInputs, async (req, res) => {
 - Greeks: Delta (Δ): ${deltaVal}, Vega (ν): ${vegaVal}, Theta (Θ): ${thetaVal}
 
 Latest Market News (${symbol}):
-${newsLines}
+${newsLines}`;
 
-Provide your risk assessment now.`;
+    if (customPrompt && typeof customPrompt === 'string' && customPrompt.trim()) {
+      prompt += `\n\nSpecific Trader Query / Directive:\n"${customPrompt.trim()}"\n\nDirectly answer this trader query while synthesizing the quantitative simulation context and news above.`;
+    } else {
+      prompt += `\n\nProvide your risk assessment now.`;
+    }
 
     let streamedText = '';
 
@@ -625,7 +632,25 @@ router.get('/api/options-chain/:symbol', async (req, res) => {
   }
 });
 
+/**
+ * @route POST /api/mcp
+ * @desc Model Context Protocol (MCP) JSON-RPC 2.0 HTTP endpoint
+ */
+const mcpServer = require('../mcp_server');
+router.post('/api/mcp', async (req, res) => {
+  try {
+    const response = await mcpServer.handleMessage(req.body);
+    res.json(response);
+  } catch (error) {
+    res.status(500).json({
+      jsonrpc: '2.0',
+      id: req.body?.id || null,
+      error: { code: -32603, message: error.message || 'Internal MCP error' }
+    });
+  }
+});
+
 // History routes
 router.use('/api/history', historyRoutes);
 
-module.exports = router; 
+module.exports = router;

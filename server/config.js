@@ -28,10 +28,13 @@ function envFloat(key, defaultValue) {
 }
 
 function resolveLlmProvider() {
+  if (process.env.NODE_ENV !== 'production') {
+    return 'ollama';
+  }
   const explicit = process.env.LLM_PROVIDER?.toLowerCase();
   if (explicit === 'google') return 'gemini';
   if (explicit) return explicit;
-  return process.env.NODE_ENV === 'production' ? 'gemini' : 'ollama';
+  return 'gemini';
 }
 
 const ollamaUrl = env('OLLAMA_URL', 'http://localhost:11434').replace(/\/$/, '');

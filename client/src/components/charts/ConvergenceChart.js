@@ -59,33 +59,45 @@ const ConvergenceChart = ({ convergenceData }) => {
     plugins: {
       legend: {
         position: 'top',
-        labels: { color: '#94a3b8', font: { family: 'Inter' } }
+        labels: { color: '#cbd5e1', font: { family: 'Inter', size: 12, weight: 600 } }
       },
       title: {
-        display: true,
-        text: 'Monte Carlo Price Error Narrowing Curve (Convergence Lab)',
-        color: '#94a3b8',
-        font: { size: 14, family: 'Inter' }
+        display: false
+      },
+      tooltip: {
+        backgroundColor: '#09090b',
+        titleColor: '#60a5fa',
+        bodyColor: '#ffffff',
+        borderColor: '#27272a',
+        borderWidth: 1,
+        padding: 10
       }
     },
     scales: {
       y: {
-        title: { display: true, text: 'Option Price ($)', color: '#94a3b8' },
-        ticks: { color: '#94a3b8' },
-        grid: { color: 'rgba(255, 255, 255, 0.06)' }
+        title: { display: true, text: 'Option Price ($)', color: '#cbd5e1', font: { size: 12, weight: 600 } },
+        ticks: { color: '#cbd5e1' },
+        grid: { color: 'rgba(255, 255, 255, 0.07)' }
       },
       x: {
-        title: { display: true, text: 'Number of Simulation Trials (N)', color: '#94a3b8' },
-        ticks: { color: '#94a3b8' },
-        grid: { color: 'rgba(255, 255, 255, 0.06)' }
+        title: { display: true, text: 'Number of Simulation Trials (N)', color: '#cbd5e1', font: { size: 12, weight: 600 } },
+        ticks: { color: '#cbd5e1' },
+        grid: { color: 'rgba(255, 255, 255, 0.04)' }
       }
     }
   };
 
   return (
     <div className="card chart-card">
-      <h3 className="card-title">Convergence Behavior</h3>
-      <div className="chart-container">
+      <div className="card-header-row">
+        <div>
+          <h3 className="card-title" style={{ margin: 0 }}>Monte Carlo Convergence & Error Bounds</h3>
+          <span className="subtitle">
+            Demonstrates O(1/√N) standard error decay towards true analytical expectation
+          </span>
+        </div>
+      </div>
+      <div className="chart-container" style={{ height: '380px', width: '100%', marginTop: '10px' }}>
         <Line data={data} options={options} />
       </div>
     </div>

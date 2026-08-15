@@ -16,9 +16,9 @@ function formatTimestamp(isoStr) {
 const HistoryTable = ({ history, onLoadSimulation, onDeleteSimulation, loading }) => {
   if (!history || history.length === 0) {
     return (
-      <div className="card history-card" style={{ border: '1px solid #1e293b', background: '#050811', padding: '20px' }}>
+      <div className="card history-card" style={{ border: '1px solid #27272a', padding: '24px' }}>
         <h3 className="card-title" style={{ color: '#60a5fa', margin: '0 0 12px' }}>Saved Simulation History</h3>
-        <p className="empty-text" style={{ color: '#94a3b8', margin: 0 }}>
+        <p className="empty-text" style={{ color: '#cbd5e1', margin: 0, fontSize: '0.92rem' }}>
           No simulation runs saved in MongoDB yet. Run a simulation and click <strong>"Save Run to MongoDB"</strong> to persist results.
         </p>
       </div>
@@ -26,16 +26,16 @@ const HistoryTable = ({ history, onLoadSimulation, onDeleteSimulation, loading }
   }
 
   return (
-    <div className="card history-card" style={{ border: '1px solid #1e293b', background: '#050811', padding: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+    <div className="card history-card" style={{ border: '1px solid #27272a', padding: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <h3 className="card-title" style={{ color: '#60a5fa', margin: 0 }}>Saved Simulation History ({history.length})</h3>
-        {loading && <span style={{ color: '#38bdf8', fontSize: '0.8rem' }}>Updating…</span>}
+        {loading && <span style={{ color: '#38bdf8', fontSize: '0.85rem' }}>Updating…</span>}
       </div>
 
       <div className="table-responsive">
         <table className="table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #1e293b', color: '#94a3b8', fontSize: '0.85rem' }}>
+            <tr style={{ borderBottom: '1px solid #27272a', color: '#cbd5e1', fontSize: '0.88rem' }}>
               <th style={{ padding: '8px' }}>Saved</th>
               <th style={{ padding: '8px' }}>Name / Ticker</th>
               <th style={{ padding: '8px' }}>Type</th>
@@ -94,7 +94,7 @@ const HistoryTable = ({ history, onLoadSimulation, onDeleteSimulation, loading }
                           style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #7f1d1d', color: '#f87171', padding: '3px 8px', fontSize: '0.75rem', borderRadius: '4px', cursor: 'pointer' }}
                           title="Delete from MongoDB"
                         >
-                          ✕
+                          Delete
                         </button>
                       )}
                     </div>
