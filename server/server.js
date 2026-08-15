@@ -46,7 +46,13 @@ app.use(mongoSanitize());
 
 // CORS configuration
 app.use(cors({
-  origin: config.nodeEnv === 'production' ? config.corsOrigins : '*',
+  origin: (origin, callback) => {
+    // Allow same-origin, curl/server requests, Render subdomains, and configured origins
+    if (!origin || origin.includes('.onrender.com') || origin.includes('localhost') || config.corsOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
