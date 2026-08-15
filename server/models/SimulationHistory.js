@@ -5,6 +5,12 @@ const SimulationHistorySchema = new mongoose.Schema({
     type: String,
     default: 'Untitled Simulation'
   },
+  symbol: {
+    type: String,
+    default: 'AAPL',
+    uppercase: true,
+    trim: true
+  },
   description: {
     type: String,
     default: ''
@@ -16,7 +22,7 @@ const SimulationHistorySchema = new mongoose.Schema({
   simulationType: {
     type: String,
     required: true,
-    enum: ['black-scholes'] // Can expand this list as more simulation types are added
+    enum: ['european', 'black-scholes', 'asian', 'greeks', 'delta-hedge']
   },
   parameters: {
     type: Object,
@@ -28,8 +34,12 @@ const SimulationHistorySchema = new mongoose.Schema({
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
+    index: true
   }
 });
 
-module.exports = mongoose.model('SimulationHistory', SimulationHistorySchema); 
+SimulationHistorySchema.index({ simulationType: 1, createdAt: -1 });
+SimulationHistorySchema.index({ symbol: 1, createdAt: -1 });
+
+module.exports = mongoose.model('SimulationHistory', SimulationHistorySchema);

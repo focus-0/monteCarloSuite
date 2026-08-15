@@ -1,10 +1,10 @@
-# MonteCarloSuite — Multi-Threaded C++ Quantitative Engine & Gemma Risk Backend
+# MonteCarloSuite — Multi-Threaded C++ Quantitative Engine & AI Risk Backend
 
-**MonteCarloSuite** is a high-performance quantitative finance backend built around a native **multi-threaded C++17 Monte Carlo engine** for sub-millisecond option pricing, risk sensitivity computation ($\Delta, \Gamma, \nu, \Theta, \rho$), and discrete delta-hedging simulation. An **AI risk agent** (local Ollama or Groq cloud) provides AI-driven risk audits over C++ pricing output, with optional tool calls into live market news and Greeks recalculation.
+**MonteCarloSuite** is a high-performance quantitative finance backend built around a native **multi-threaded C++17 Monte Carlo engine** for sub-millisecond option pricing, risk sensitivity computation ($\Delta, \Gamma, \nu, \Theta, \rho$), and discrete delta-hedging simulation. An **AI risk agent** (local Ollama `gemma4:12b`, **Gemini** on Docker/Render, or optional Groq) provides AI-driven risk audits over C++ pricing output, with optional tool calls for follow-up requests.
 
 The stack also includes an **Express REST API**, a **JSON-RPC Model Context Protocol (MCP) server**, a **Live Financial News pipeline**, and Yahoo Finance market data integration.
 
-> **Product focus:** The primary AI workflow is `POST /api/agent/analyze` — C++ pricing + local Gemma risk summary.
+> **Product focus:** The primary AI workflow is `POST /api/agent/analyze` — C++ pricing + LLM risk summary (Ollama locally, Gemini on deploy).
 
 ---
 
@@ -20,7 +20,7 @@ flowchart TB
 
   subgraph server [Node.js Express — port 5001]
     Routes[routes.js]
-    Gemma[gemma_agent.js]
+    QuantAgent[quant_agent.js]
     News[market_news.js]
     Market[market_data.js]
     TimeFmt[time_format.js]
@@ -41,10 +41,10 @@ flowchart TB
   MCPServer --> MCService
   HTTP --> Routes
   Routes --> MCService
-  Routes --> Gemma
-  Gemma --> Ollama
-  Gemma --> News
-  Gemma --> MCService
+  Routes --> QuantAgent
+  QuantAgent --> Ollama
+  QuantAgent --> News
+  QuantAgent --> MCService
   MCService --> Binary
   Market --> Yahoo
   News --> GNews
@@ -57,7 +57,7 @@ flowchart TB
 | C++ Monte Carlo engine | `server/cpp/` | Pricing, Greeks, Asian options, delta hedge, price paths |
 | Express REST API | `server/server.js`, `server/src/routes.js` | HTTP endpoints |
 | MCP server | `server/mcp_server.js` | Standalone stdio JSON-RPC tool host |
-| Gemma agent | `server/utils/gemma_agent.js` | Ollama `gemma4:12b` with tool calling |
+| Quant agent | `server/utils/quant_agent.js` | LLM tool-calling agent (Ollama / Gemini / Groq via `llm_provider.js`); `gemma_agent.js` re-exports for compat |
 | Market data | `server/utils/market_data.js` | Yahoo Finance spot + IV |
 | Options chain | `server/utils/options_chain.js` | Yahoo options chain, ATM picker |
 | Vol surface | `server/utils/vol_surface.js` | IV surface from chain |
@@ -183,13 +183,13 @@ News articles include `pubDateIso`, `pubDateFormatted`, `ageMinutes`, and wall-c
 
 The options chain endpoint returns nearest-expiry calls and puts with implied vol.
 
-### 3.4 Gemma Risk Audit
+### 3.4 AI Risk Audit
 
 | Method | Path | Description |
 | :--- | :--- | :--- |
-| `POST` | `/api/agent/analyze` | C++ pricing + Greeks, then LLM risk summary (Ollama or Groq) |
+| `POST` | `/api/agent/analyze` | C++ pricing + Greeks, then LLM risk summary (Ollama, Gemini, or Groq) |
 
-Computes European, Asian, and Greeks in C++, **fetches live Google News RSS headlines** for the request `symbol` (default `AAPL`), builds a structured prompt including those headlines, and invokes `runGemmaAgent` (`gemma4:12b`). Gemma may still autonomously call `get_market_news` and `calculate_greeks` tools before responding. The **exact messages, tool schemas, and multi-turn expansion** sent to the LLM are documented in **§4.4**.
+Computes European, Asian, and Greeks in C++, **fetches live Google News RSS headlines** for the request `symbol` (default `AAPL`), builds a structured prompt including those headlines, and invokes `runQuantAgent` with `skipTools: true` so the model uses embedded data on the first pass. The LLM responds with structured JSON `{"recommendation":"BUY|SELL|HOLD","reasoning":"..."}`. Tools are available only for follow-up requests with different symbols or parameters. The **exact messages, tool schemas, and multi-turn expansion** sent to the LLM are documented in **§4.4**.
 
 **Request body** adds optional `symbol` (ticker string, e.g. `"NVDA"`). Other fields match pricing endpoints:
 
@@ -226,7 +226,7 @@ Computes European, Asian, and Greeks in C++, **fetches live Google News RSS head
 
 Locally requires **Ollama** with `gemma4:12b` (`LLM_PROVIDER=ollama` in `server/.env`). On Docker/Render, use **Gemini** (`LLM_PROVIDER=gemini` + `GEMINI_API_KEY`) — Ollama is not available. Falls back to rule-based text if the LLM is unreachable or misconfigured.
 
-> **Latency note:** Local `gemma4:12b` on `/api/agent/analyze` commonly takes **1–5+ minutes** wall time (`llmTimeSec` in `benchmarkStats`). Gemini on deploy is much faster. Optional tool-calling rounds (`get_market_news`, `calculate_greeks`) add a second inference pass.
+> **Latency note:** Local `gemma4:12b` on `/api/agent/analyze` commonly takes **1–5+ minutes** wall time (`llmTimeSec` in `benchmarkStats`). Gemini on deploy is much faster. The analyze route skips tools on call #1 to avoid redundant second inference passes.
 
 ### 3.5 Simulation History (MongoDB)
 
@@ -252,18 +252,18 @@ Requires MongoDB (`MONGO_URI`); server starts without DB if connection fails.
 }
 ```
 
-`simulationType` must be one of the enum values in `SimulationHistory.js` (currently `"black-scholes"`). `parameters` and `result` are free-form objects.
+`simulationType` must be one of the enum values in `SimulationHistory.js`: `"black-scholes"`, `"asian"`, `"greeks"`, `"delta-hedge"`. `parameters` and `result` are free-form objects.
 
 ---
 
-## 4. Gemma Agent (`server/utils/gemma_agent.js`)
+## 4. Quant Agent (`server/utils/quant_agent.js`)
 
 LLM integration via `server/utils/llm_provider.js` — switchable by env (backend only):
 
 | `LLM_PROVIDER` | Backend | Model (default) | Notes |
 | :--- | :--- | :--- | :--- |
 | `ollama` (default) | Local Ollama `POST /api/chat` | `gemma4:12b` | Requires Ollama running locally |
-| `gemini` or `google` | Google Gemini OpenAI-compatible API | `gemini-2.0-flash` | **Docker/Render default** — set `GEMINI_API_KEY` and `LLM_PROVIDER=gemini` |
+| `gemini` or `google` | Google Gemini OpenAI-compatible API | `gemini-flash-lite-latest` | **Docker/Render default** — set `GEMINI_API_KEY` and `LLM_PROVIDER=gemini` |
 | `groq` | Groq OpenAI-compatible API | `llama-3.3-70b-versatile` | Optional alternative; set `GROQ_API_KEY` and `LLM_PROVIDER=groq` |
 
 **Local dev** (`server/.env`):
@@ -280,7 +280,7 @@ OLLAMA_TIMEOUT_MS=0
 ```bash
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=...                   # store in server/.env (gitignored), referenced by Compose
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-flash-lite-latest
 ```
 
 If `LLM_PROVIDER=gemini` without `GEMINI_API_KEY`, agent routes return a clear fallback error.
@@ -296,15 +296,15 @@ If `LLM_PROVIDER=gemini` without `GEMINI_API_KEY`, agent routes return a clear f
 
 | Function | Used By | Purpose |
 | :--- | :--- | :--- |
-| `runGemmaAgent(prompt)` | `POST /api/agent/analyze` | Risk audit with optional tool loop |
+| `runQuantAgent(prompt, { skipTools })` | `POST /api/agent/analyze` | Risk audit; analyze route passes `skipTools: true` |
 
 ### 4.3 Temporal Semantics
 
-News articles carry wall-clock `fetchedAt` / `pubDateIso`. The agent system prompt instructs Gemma to compare events using explicit ISO 8601 timestamps.
+News articles carry wall-clock `fetchedAt` / `pubDateIso`. The agent system prompt instructs the model to compare events using explicit ISO 8601 timestamps and to use embedded prompt data rather than re-fetching via tools on the first pass.
 
 ### 4.4 Exact LLM input (`POST /api/agent/analyze`)
 
-`routes.js` runs C++ pricing first, then passes the rendered user prompt to `runGemmaAgent(prompt)` in `gemma_agent.js`. The provider (`llm_provider.js`) sends a non-streaming chat request:
+`routes.js` runs C++ pricing first, then passes the rendered user prompt to `runQuantAgent(prompt, { skipTools: true })` in `quant_agent.js`. The provider (`llm_provider.js`) sends a non-streaming chat request with JSON mode enabled:
 
 ```http
 POST {OLLAMA_URL}/api/chat
@@ -313,16 +313,18 @@ Content-Type: application/json
 { "model": "<OLLAMA_MODEL>", "stream": false, "messages": [...], "tools": [...] }
 ```
 
-(Groq uses the OpenAI-compatible chat completions URL when `LLM_PROVIDER=groq`.)
+(Gemini and Groq use OpenAI-compatible chat completions URLs when `LLM_PROVIDER=gemini` or `groq`.)
 
 #### LLM call #1 — initial payload
 
-**Two messages** are always sent. Tool schemas are attached **only on this first call**.
+**Two messages** are always sent. Tool schemas are attached **only when `skipTools` is false** (not used on `/api/agent/analyze`).
 
-**Message 1 — `role: "system"`** (from `runGemmaAgent`):
+**Message 1 — `role: "system"`** (from `runQuantAgent`):
 
 ```text
-You are an autonomous Senior Quantitative Risk Analyst & MFT Volatility Trader. You have access to tools to fetch live web market news and compute sub-2ms C++ Greeks. When answering risk or market questions, call the tools to get real data before forming your final trading decision. IMPORTANT: Simulated price paths use simulationTime ISO timestamps (synthetic replay). Live news from get_market_news uses wall-clock fetchedAt/pubDateIso and may be from a different calendar date. Always compare events using explicit ISO 8601 UTC timestamps — never assume news and simulated ticks are contemporaneous.
+You are an autonomous Senior Quantitative Risk Analyst & MFT Volatility Trader. The user message already contains current C++ Monte Carlo prices, Greeks, and market news headlines — use that embedded data for your analysis. Do NOT call tools to re-fetch the same symbol or parameters unless the user explicitly asks for different inputs. Tools (get_market_news, calculate_greeks) are for follow-up questions only.
+
+Respond with valid JSON only: {"recommendation":"BUY|SELL|HOLD","reasoning":"..."}. Put your full plain-English analysis (bullet points, comparisons, justification) in the reasoning field. IMPORTANT: Simulated price paths use simulationTime ISO timestamps (synthetic replay). Live news from get_market_news uses wall-clock fetchedAt/pubDateIso and may be from a different calendar date. Always compare events using explicit ISO 8601 UTC timestamps — never assume news and simulated ticks are contemporaneous.
 ```
 
 **Message 2 — `role: "user"`** (built in `routes.js` after C++ runs):
@@ -348,6 +350,8 @@ INSTRUCTIONS:
 2. Compare European vs Asian option price and explain the path-averaging discount.
 3. Note whether any headline above could affect vol or directional risk for this option.
 4. Give a final BUY, SELL, or HOLD risk recommendation with justification.
+
+OUTPUT FORMAT: Respond with JSON only: {"recommendation":"BUY|SELL|HOLD","reasoning":"..."} — put your full analysis in reasoning.
 ```
 
 Placeholder sources:
@@ -382,9 +386,11 @@ INSTRUCTIONS:
 2. Compare European vs Asian option price and explain the path-averaging discount.
 3. Note whether any headline above could affect vol or directional risk for this option.
 4. Give a final BUY, SELL, or HOLD risk recommendation with justification.
+
+OUTPUT FORMAT: Respond with JSON only: {"recommendation":"BUY|SELL|HOLD","reasoning":"..."} — put your full analysis in reasoning.
 ```
 
-**Tools on call #1** (`GEMMA_TOOLS` in `gemma_agent.js`):
+**Tools on call #1** (`QUANT_TOOLS` in `quant_agent.js`) — **omitted when `skipTools: true`** (default on `/api/agent/analyze`):
 
 | Tool | Description | Parameters |
 | :--- | :--- | :--- |
@@ -400,7 +406,7 @@ If the model returns `tool_calls` on call #1, the server appends:
    - `get_market_news` → `{ toolName, symbol, dataSource, fetchedAt, fetchedAtDisplay, articles[] }` (default 5 articles via `AGENT_NEWS_DEFAULT_COUNT`)
    - `calculate_greeks` → `{ toolName, computedAt, optionPrice, greeks, executionTimeMs }`
 
-Call #2 resends the **full conversation** (system + user + assistant + tool messages) with **no `tools` array**. The final assistant `content` becomes `gemmaText` in the API response.
+Call #2 resends the **full conversation** (system + user + assistant + tool messages) with **no `tools` array**. The final assistant `content` is parsed as JSON; the `reasoning` field becomes `gemmaText` in the API response.
 
 If the model answers without tools (common), there is **only one** LLM call.
 
@@ -415,13 +421,13 @@ If the model answers without tools (common), there is **only one** LLM call.
 | UI `marketNews` section | Same RSS fetch embedded in the user prompt; returned separately for display |
 | Streaming | `stream: false` — client waits for the full completion |
 
-> **News is always prefetched** for `/api/agent/analyze` (in the user prompt). The model may still call `get_market_news` again via tools, which duplicates the fetch. **Prompt overlap:** The system message tells the model to call tools for real data; the user message already embeds C++ prices, Greeks, and headlines. That can trigger redundant tool calls (especially `calculate_greeks`) and a second, slower inference pass — see latency notes in §3.4.
+> **News is always prefetched** for `/api/agent/analyze` (in the user prompt). The analyze route passes `skipTools: true` so the model does not redundantly call `get_market_news` or `calculate_greeks` on the first pass.
 
 ---
 
 ## 5. MCP Server (`server/mcp_server.js`)
 
-Standalone **JSON-RPC 2.0 over stdio** process — separate from both the Express app and the HTTP LLM client in `gemma_agent.js` (which routes through `llm_provider.js` for Ollama or Groq). Compatible with Claude Desktop, Cursor, and the Python agents in `examples/agent/`.
+Standalone **JSON-RPC 2.0 over stdio** process — separate from both the Express app and the HTTP LLM client in `quant_agent.js` (which routes through `llm_provider.js` for Ollama, Gemini, or Groq). Compatible with Claude Desktop, Cursor, and the Python agents in `examples/agent/`.
 
 ```bash
 node server/mcp_server.js
@@ -506,7 +512,7 @@ Persisted when MongoDB is connected:
   name: String,           // default: 'Untitled Simulation'
   description: String,    // default: ''
   tags: [String],         // default: []
-  simulationType: String, // required; enum: ['black-scholes']
+  simulationType: String, // required; enum: ['black-scholes', 'asian', 'greeks', 'delta-hedge']
   parameters: Object,     // required — simulation inputs (S0, K, r, sigma, T, isCall, numTrials, …)
   result: Object,         // required — pricing output (optionPrice, confidence, greeks, …)
   createdAt: Date         // auto-set
@@ -585,7 +591,7 @@ Copy `server/.env.example` to `server/.env`. Variables are loaded automatically 
 | `GROQ_TIMEOUT_MS` | `120000` | Groq request timeout (ms) |
 | `GROQ_KEYS_URL` | `https://console.groq.com/keys` | Link shown in missing-key errors |
 | `GEMINI_API_KEY` | — | Required when `LLM_PROVIDER=gemini` |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model name |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini model name |
 | `GEMINI_API_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` | Gemini chat completions endpoint |
 | `GEMINI_TIMEOUT_MS` | `120000` | Gemini request timeout (ms) |
 | `GEMINI_KEYS_URL` | `https://aistudio.google.com/apikey` | Link shown in missing-key errors |
@@ -616,7 +622,7 @@ LLM routing is handled by `server/utils/llm_provider.js` reading from `server/co
 | :--- | :--- | :--- | :--- |
 | Config files | `server/.env` | root `.env` + `server/.env` | Render dashboard env vars |
 | `LLM_PROVIDER` | `ollama` | `gemini` | `gemini` |
-| Model | `gemma4:12b` (Ollama) | `gemini-2.0-flash` | `gemini-2.0-flash` |
+| Model | `gemma4:12b` (Ollama) | `gemini-flash-lite-latest` | `gemini-flash-lite-latest` |
 | API key var | *(none — local Ollama)* | `GEMINI_API_KEY` | `GEMINI_API_KEY` |
 | Ollama required | Yes (`ollama pull gemma4:12b`) | No | No |
 
@@ -674,7 +680,7 @@ Ticker selection flows into **AI Risk Audit** as the `symbol` sent to `/api/agen
 | :--- | :--- |
 | Fair Value & Greeks | `ResultsPanel` after C++ run |
 | Trajectories & Accuracy | Price paths + convergence charts |
-| AI Risk Analyst | Four sections: (1) Impact audit — server-computed from Greeks; (2) European vs Asian; (3) Live Market News; (4) Gemma prose (`gemmaText`) |
+| AI Risk Analyst | Five sections: (0) Greeks consistency check (pass/warning panel); (1) Impact & Sensitivity Audit; (2) European vs Asian path discount; (3) Live Market News; (4) Plain-English Agent Advice (`gemmaText` shows JSON `reasoning`). Header shows active LLM provider/model from `/api/implementation-status`. |
 
 ### 10.4 Key client files
 
@@ -761,7 +767,7 @@ Compose defaults `LLM_PROVIDER` to `gemini` in root `.env.example` and `docker-c
 | `MONGO_URI` | `mongodb://localhost:27017/montecarlo` | Optional history DB |
 | `LLM_PROVIDER` | `gemini` (Compose default) | Set to `gemini` on Render; `ollama` for local npm dev |
 | `GEMINI_API_KEY` | — | Required when `LLM_PROVIDER=gemini` |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model id |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini model id |
 | `GROQ_API_KEY` | — | Optional when `LLM_PROVIDER=groq` |
 | `OLLAMA_URL` | `http://localhost:11434` | Local / sidecar Ollama only |
 
@@ -781,9 +787,10 @@ See **§9.2** for the full local workflow (`npm run dev`, env files, Ollama). Do
 | `monte_carlo_service.js` | Unified facade: C++ primary, JS fallback |
 | `monte_carlo_js.js` | Pure JS Monte Carlo for benchmarking |
 | `black_scholes_analytical.js` | Closed-form validation |
-| `gemma_agent.js` | LLM chat (Ollama/Gemini/Groq), tool calling, trading decision parser |
-| `llm_provider.js` | Ollama / Gemini / Groq provider abstraction (`undici` for Ollama) |
-| `recommendation_validator.js` | Parses BUY/SELL/HOLD from Gemma text; Greeks consistency flags |
+| `quant_agent.js` | LLM chat (Ollama/Gemini/Groq), tool calling, structured JSON trading decision |
+| `gemma_agent.js` | Deprecated re-export of `quant_agent.js` |
+| `llm_provider.js` | Ollama / Gemini / Groq provider abstraction (`undici` for Ollama); JSON mode support |
+| `recommendation_validator.js` | Parses JSON/regex BUY/SELL/HOLD; Greeks consistency flags; price-scaled vega threshold |
 | `market_data.js` | Yahoo Finance integration (uses `yahoo_finance.js`) |
 | `yahoo_finance.js` | Shared yahoo-finance2 client singleton |
 | `options_chain.js` | Yahoo options chain, ATM strike/IV picker |
@@ -834,7 +841,7 @@ Set in **Render Dashboard → Web Service → Environment**:
 | `PORT` | Auto | Render injects this — do not hardcode |
 | `GEMINI_API_KEY` | **Yes for AI** | Key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | `LLM_PROVIDER` | **Yes for AI on Render** | `gemini` — must be set explicitly; code default is `ollama` |
-| `GEMINI_MODEL` | Optional | `gemini-2.0-flash` (default) |
+| `GEMINI_MODEL` | Optional | `gemini-flash-lite-latest` (default) |
 | `MONGO_URI` | Optional | MongoDB Atlas connection string for simulation history |
 | `OLLAMA_URL` | No | Not used on Render — Ollama cannot run on Render |
 

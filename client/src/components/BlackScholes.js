@@ -40,7 +40,12 @@ const BlackScholes = () => {
   const [greeksResult, setGreeksResult] = useState(null);
   const [pathsData, setPathsData] = useState(null);
   const [convergenceData, setConvergenceData] = useState([]);
-  const [history] = useState([]);
+
+  // MongoDB History State
+  const [history, setHistory] = useState([]);
+  const [dbStatus, setDbStatus] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -48,6 +53,71 @@ const BlackScholes = () => {
   const [showNavMenu, setShowNavMenu] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const navMenuRef = useRef(null);
+
+  // Fetch MongoDB history and database status
+  const fetchDbStatus = async () => {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/history/status`);
+      setDbStatus(res.data);
+    } catch {
+      setDbStatus({ connected: false, status: 'disconnected' });
+    }
+  };
+
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/history`);
+      if (Array.isArray(res.data)) {
+        setHistory(res.data);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch history:', err.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDbStatus();
+    fetchHistory();
+  }, []);
+
+  const handleSaveToHistory = async () => {
+    if (!cppResult && !hedgeResult) return;
+    setSaveStatus('saving');
+
+    const isHedge = activeTab === 'delta-hedge';
+    const payload = {
+      simulationType: isHedge ? 'delta-hedge' : optionType,
+      symbol: symbol || 'AAPL',
+      name: `${symbol || 'AAPL'} ${isHedge ? 'Delta-Hedge' : optionType.toUpperCase()} ($${params.K})`,
+      parameters: isHedge ? { ...params, ...hedgeParams } : params,
+      result: isHedge ? hedgeResult?.summaryStatistics || {} : cppResult
+    };
+
+    try {
+      await axios.post(`${API_BASE_URL}/api/history`, payload);
+      setSaveStatus('saved');
+      fetchHistory();
+      fetchDbStatus();
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (err) {
+      console.error('Failed to save to MongoDB:', err);
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus(null), 4000);
+    }
+  };
+
+  const handleDeleteHistory = async (id) => {
+    try {
+      await axios.delete(`${API_BASE_URL}/api/history/${id}`);
+      setHistory((prev) => prev.filter((item) => (item._id || item.id) !== id));
+      fetchDbStatus();
+    } catch (err) {
+      console.error('Failed to delete history item:', err);
+    }
+  };
 
   const handleParamChange = (name, value) => {
     const parsed =
@@ -115,7 +185,7 @@ const BlackScholes = () => {
         try {
           const res = await axios.post(`${API_BASE_URL}/api/black-scholes/cpp`, { ...parsedParams, numTrials: t });
           convData.push({ trials: t, price: res.data.optionPrice, confidence: res.data.confidence });
-        } catch (convErr) {
+        } catch {
           // ignore step failure
         }
       }
@@ -184,16 +254,26 @@ const BlackScholes = () => {
         isCall: historyItem.parameters.isCall !== undefined ? historyItem.parameters.isCall : true,
         numTrials: historyItem.parameters.numTrials || 100000
       });
-      if (historyItem.simulationType) {
-        setOptionType(historyItem.simulationType.toLowerCase());
+      if (historyItem.symbol) {
+        setSymbol(historyItem.symbol);
       }
-      setActiveTab('simulator');
+      if (historyItem.simulationType) {
+        const type = historyItem.simulationType.toLowerCase();
+        if (type === 'delta-hedge') {
+          setActiveTab('delta-hedge');
+        } else {
+          setOptionType(type === 'black-scholes' ? 'european' : type === 'asian' ? 'asian' : type);
+          setActiveTab('simulator');
+        }
+      }
       setShowHistoryModal(false);
     }
   };
 
   const openHistoryModal = () => {
     setShowNavMenu(false);
+    fetchHistory();
+    fetchDbStatus();
     setShowHistoryModal(true);
   };
 
@@ -216,6 +296,27 @@ const BlackScholes = () => {
           <h2>MonteCarloSuite</h2>
         </div>
         <div className="nav-right">
+          {/* Live MongoDB Status Indicator */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '12px' }}>
+            <span
+              style={{
+                fontSize: '0.78rem',
+                color: dbStatus?.connected ? '#4ade80' : '#64748b',
+                background: dbStatus?.connected ? 'rgba(34, 197, 94, 0.1)' : '#0f172a',
+                border: `1px solid ${dbStatus?.connected ? '#16a34a' : '#1e293b'}`,
+                padding: '3px 8px',
+                borderRadius: '12px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+              title={dbStatus?.connected ? `Connected to MongoDB (${dbStatus.dbName})` : 'MongoDB offline'}
+            >
+              <span style={{ fontSize: '0.6rem' }}>{dbStatus?.connected ? '●' : '○'}</span>
+              MongoDB: {dbStatus?.connected ? 'Online' : 'Offline'}
+            </span>
+          </div>
+
           <div className="nav-tabs">
             <button
               className={`tab-btn ${activeTab === 'simulator' ? 'active' : ''}`}
@@ -242,7 +343,7 @@ const BlackScholes = () => {
             {showNavMenu && (
               <div className="nav-menu-dropdown">
                 <button className="nav-menu-item" onClick={openHistoryModal}>
-                  Simulation History
+                  Simulation History ({history.length})
                 </button>
               </div>
             )}
@@ -297,10 +398,32 @@ const BlackScholes = () => {
                     <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#60a5fa', fontWeight: 600 }}>← try this</span>
                   )}
                 </button>
-                {showAgentHint && resultSubView !== 'agent' && (
-                  <span style={{ fontSize: '0.75rem', color: '#64748b', marginLeft: 'auto', paddingRight: '4px' }}>
-                    Run AI risk audit on these params →
-                  </span>
+
+                {/* Save to MongoDB action button */}
+                {cppResult && (
+                  <button
+                    className="btn btn-xs"
+                    onClick={handleSaveToHistory}
+                    disabled={saveStatus === 'saving'}
+                    style={{
+                      marginLeft: 'auto',
+                      background: saveStatus === 'saved' ? '#15803d' : '#1e293b',
+                      border: `1px solid ${saveStatus === 'saved' ? '#22c55e' : '#334155'}`,
+                      color: saveStatus === 'saved' ? '#ffffff' : '#38bdf8',
+                      fontSize: '0.8rem',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {saveStatus === 'saving'
+                      ? 'Saving…'
+                      : saveStatus === 'saved'
+                        ? '✓ Saved to DB'
+                        : saveStatus === 'error'
+                          ? '⚠ Save Failed (DB offline)'
+                          : '💾 Save Run to MongoDB'}
+                  </button>
                 )}
               </div>
 
@@ -350,6 +473,32 @@ const BlackScholes = () => {
 
         {activeTab === 'delta-hedge' && (
           <div className="single-col">
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+              {hedgeResult && (
+                <button
+                  className="btn btn-xs"
+                  onClick={handleSaveToHistory}
+                  disabled={saveStatus === 'saving'}
+                  style={{
+                    background: saveStatus === 'saved' ? '#15803d' : '#1e293b',
+                    border: `1px solid ${saveStatus === 'saved' ? '#22c55e' : '#334155'}`,
+                    color: saveStatus === 'saved' ? '#ffffff' : '#38bdf8',
+                    fontSize: '0.8rem',
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {saveStatus === 'saving'
+                    ? 'Saving…'
+                    : saveStatus === 'saved'
+                      ? '✓ Saved to DB'
+                      : saveStatus === 'error'
+                        ? '⚠ Save Failed (DB offline)'
+                        : '💾 Save Hedge to MongoDB'}
+                </button>
+              )}
+            </div>
             <DeltaHedgeSimulator result={hedgeResult} loading={hedgeLoading} error={hedgeError} />
           </div>
         )}
@@ -357,9 +506,9 @@ const BlackScholes = () => {
 
       {showHistoryModal && (
         <div className="modal-overlay" onClick={() => setShowHistoryModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Simulation History</h3>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '800px' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, color: '#f8fafc' }}>Simulation History</h3>
               <button
                 className="modal-close-btn"
                 onClick={() => setShowHistoryModal(false)}
@@ -368,7 +517,12 @@ const BlackScholes = () => {
                 ×
               </button>
             </div>
-            <HistoryTable history={history} onLoadSimulation={handleLoadSimulation} />
+            <HistoryTable
+              history={history}
+              loading={historyLoading}
+              onLoadSimulation={handleLoadSimulation}
+              onDeleteSimulation={handleDeleteHistory}
+            />
           </div>
         </div>
       )}

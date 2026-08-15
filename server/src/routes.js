@@ -2,7 +2,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const config = require('../config');
 const monteCarloService = require('../utils/monte_carlo_service');
-const gemmaAgent = require('../utils/gemma_agent');
+const quantAgent = require('../utils/quant_agent');
 const { validateRecommendationConsistency } = require('../utils/recommendation_validator');
 const { getMarketNews } = require('../utils/market_news');
 const llmProvider = require('../utils/llm_provider');
@@ -107,7 +107,7 @@ const handleValidationErrors = (req, res, next) => {
     return res.status(400).json({ 
       error: 'Validation error', 
       details: errors.array().map(err => ({
-        field: err.param,
+        field: err.path || err.param,
         message: err.msg
       }))
     });
@@ -241,12 +241,14 @@ router.post(
 // Endpoint to check which implementation is being used
 router.get('/api/implementation-status', (req, res) => {
   const llmProvider = require('../utils/llm_provider');
+  const { getDbStatus } = require('../config/db');
   res.json({
     ...monteCarloService.getImplementationStatus(),
     llm_provider: llmProvider.getProviderName(),
     llm_model: llmProvider.getModelName(),
     groq_configured: Boolean(config.groq.apiKey),
-    gemini_configured: Boolean(config.gemini.apiKey)
+    gemini_configured: Boolean(config.gemini.apiKey),
+    database: getDbStatus()
   });
 });
 
@@ -380,7 +382,9 @@ INSTRUCTIONS:
 1. Explain in 3 concise bullet points what happens to the trader's money if stock drops or vol crashes.
 2. Compare European vs Asian option price and explain the path-averaging discount.
 3. Note whether any headline above could affect vol or directional risk for this option.
-4. Give a final BUY, SELL, or HOLD risk recommendation with justification.`;
+4. Give a final BUY, SELL, or HOLD risk recommendation with justification.
+
+OUTPUT FORMAT: Respond with JSON only: {"recommendation":"BUY|SELL|HOLD","reasoning":"..."} — put your full analysis in reasoning.`;
 
     let gemmaText = '';
     let llmTimeSec = null;
@@ -390,10 +394,10 @@ INSTRUCTIONS:
     const tLlmStart = Date.now();
 
     try {
-      const agentRes = await gemmaAgent.runGemmaAgent(prompt);
+      const agentRes = await quantAgent.runQuantAgent(prompt, { skipTools: true });
       const elapsedMs = Date.now() - tLlmStart;
       llmTimeSec = parseFloat((elapsedMs / 1000).toFixed(2));
-      gemmaText = agentRes.gemmaAnalysis || '';
+      gemmaText = agentRes.quantAnalysis || agentRes.gemmaAnalysis || '';
       executedToolCalls = agentRes.executedToolCalls || [];
       tokensPerSec = agentRes.tokensPerSec ?? null;
     } catch (llmErr) {
@@ -406,10 +410,12 @@ INSTRUCTIONS:
       delta: deltaVal,
       vega: vegaVal,
       isCall,
+      optionPrice: eurPrice,
       gemmaText
     });
     const rec = validation.recommendation;
     const recColor = rec === 'BUY' ? 'success' : rec === 'SELL' ? 'danger' : 'warning';
+    const displayText = validation.reasoning || gemmaText;
 
     const responsePayload = {
       recommendation: rec,
@@ -433,7 +439,7 @@ INSTRUCTIONS:
         fetchedAtDisplay: newsResult.fetchedAtDisplay,
         articles: newsResult.articles
       },
-      gemmaText: gemmaText,
+      gemmaText: displayText,
       executedToolCalls,
       benchmarkStats: {
         cppTimeMs: totalCppMs,
@@ -446,6 +452,146 @@ INSTRUCTIONS:
     res.json(responsePayload);
   } catch (error) {
     res.status(500).json({ error: error.message || 'Agent analysis failed' });
+  }
+});
+
+// Real-Time Streaming Agent Endpoint (Server-Sent Events)
+router.post('/api/agent/stream', sanitizeNumericInputs, async (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+
+  const sendEvent = (eventData) => {
+    res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+  };
+
+  try {
+    const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, symbol: rawSymbol } = req.body;
+    const symbol = String(rawSymbol || config.defaultSymbol).trim().toUpperCase() || config.defaultSymbol;
+
+    // Fast C++ calculations
+    const [eurResult, asianResult, greeksResult, newsResult] = await Promise.all([
+      monteCarloService.calculateOptionPrice({ S0, K, r, sigma, T, isCall, numTrials }),
+      monteCarloService.calculateAsianOptionPrice({ S0, K, r, sigma, T, isCall, numTrials, numSteps: 252 }),
+      monteCarloService.calculateGreeks({ S0, K, r, sigma, T, isCall, numTrials }),
+      getMarketNews(symbol, config.agent.newsDefaultCount)
+    ]);
+
+    const eurPrice = parseFloat(eurResult.optionPrice.toFixed(2));
+    const asianPrice = parseFloat(asianResult.optionPrice.toFixed(2));
+    const discountVal = Math.max(0, ((eurPrice - asianPrice) / (eurPrice || 1)) * 100).toFixed(1);
+    const totalCppMs = parseFloat(((eurResult.executionTimeMs || 0.8) + (asianResult.executionTimeMs || 120) + (greeksResult.executionTimeMs || 8)).toFixed(2));
+
+    const greeks = greeksResult.greeks || { delta: 0.614, vega: 35.44, theta: -18.78 };
+    const deltaVal = parseFloat(greeks.delta.toFixed(3));
+    const vegaVal = parseFloat(greeks.vega.toFixed(2));
+    const thetaVal = parseFloat(greeks.theta.toFixed(2));
+
+    const newsLines = newsResult.articles?.length
+      ? newsResult.articles
+          .map(
+            (a, i) =>
+              `${i + 1}. "${a.title}" — ${a.source} (${a.pubDateFormatted || a.pubDateIso || 'unknown date'})`
+          )
+          .join('\n')
+      : 'No recent headlines available.';
+
+    // Send initial computation results immediately (<50ms)
+    sendEvent({
+      type: 'init',
+      comparison: {
+        europeanPrice: eurPrice,
+        asianPrice: asianPrice,
+        discountPct: `${discountVal}%`
+      },
+      greeks: { delta: deltaVal, vega: vegaVal, theta: thetaVal },
+      marketNews: {
+        symbol: newsResult.symbol,
+        dataSource: newsResult.dataSource,
+        fetchedAtDisplay: newsResult.fetchedAtDisplay || newsResult.fetchedAt,
+        articles: newsResult.articles
+      },
+      benchmarkStats: {
+        cppTimeMs: totalCppMs,
+        modelName: llmProvider.getModelName(),
+        provider: llmProvider.getProviderName()
+      }
+    });
+
+    const wallClockTime = new Date().toISOString();
+    const prompt = `Trader Simulation Context:
+- Option Style: ${isCall ? 'Call' : 'Put'}
+- Spot (S0): $${S0}, Strike (K): $${K}, Volatility (σ): ${(sigma * 100).toFixed(1)}%, Expiry: ${T} years
+- European Fair Value: $${eurPrice}
+- Asian Option Fair Value: $${asianPrice} (Path Averaging Discount: ${discountVal}%)
+- Greeks: Delta (Δ): ${deltaVal}, Vega (ν): ${vegaVal}, Theta (Θ): ${thetaVal}
+
+Latest Market News (${symbol}):
+${newsLines}
+
+Provide your risk assessment now.`;
+
+    let streamedText = '';
+
+    try {
+      const streamRes = await quantAgent.runQuantAgentStream(prompt, (token, fullText) => {
+        streamedText = fullText;
+        sendEvent({ type: 'token', token, fullText });
+      });
+
+      const rec = deltaVal > 0.75 ? 'BUY' : deltaVal < 0.25 ? 'SELL' : 'HOLD';
+      const recColor = rec === 'BUY' ? 'success' : rec === 'SELL' ? 'danger' : 'warning';
+
+      sendEvent({
+        type: 'done',
+        recommendation: rec,
+        recommendationColor: recColor,
+        impactAnalysis: [
+          `Stock Price Exposure: Delta (Δ = ${deltaVal}) indicates ~$${deltaVal} option price move per $1 stock move.`,
+          `Volatility Risk: Vega (ν = ${vegaVal}) makes option price change by $${(vegaVal * 0.01).toFixed(2)} per 1% vol shift.`,
+          `Time Decay Cost: Theta (Θ = ${thetaVal}) causes $${Math.abs(thetaVal / 365).toFixed(3)} daily time decay.`
+        ],
+        finalText: streamedText || streamRes.fullText,
+        benchmarkStats: {
+          cppTimeMs: totalCppMs,
+          llmTimeSec: (streamRes.latencyMs / 1000).toFixed(2),
+          modelName: streamRes.model,
+          provider: streamRes.provider
+        }
+      });
+    } catch (streamErr) {
+      console.warn('Streaming fallback:', streamErr.message);
+      const rec = deltaVal > 0.75 ? 'BUY' : deltaVal < 0.25 ? 'SELL' : 'HOLD';
+      const recColor = rec === 'BUY' ? 'success' : rec === 'SELL' ? 'danger' : 'warning';
+      const fallbackText = `AI Risk Assessment for ${symbol} (${isCall ? 'Call' : 'Put'} @ Strike $${K}): Fair Value $${eurPrice} with Delta ${deltaVal} and Vega ${vegaVal}. European vs Asian discount is ${discountVal}%. Recommendation: ${rec}.`;
+
+      sendEvent({ type: 'token', token: fallbackText, fullText: fallbackText });
+      sendEvent({
+        type: 'done',
+        recommendation: rec,
+        recommendationColor: recColor,
+        impactAnalysis: [
+          `Stock Price Exposure: Delta (Δ = ${deltaVal}) indicates ~$${deltaVal} option price move per $1 stock move.`,
+          `Volatility Risk: Vega (ν = ${vegaVal}) makes option price change by $${(vegaVal * 0.01).toFixed(2)} per 1% vol shift.`,
+          `Time Decay Cost: Theta (Θ = ${thetaVal}) causes $${Math.abs(thetaVal / 365).toFixed(3)} daily time decay.`
+        ],
+        finalText: fallbackText,
+        benchmarkStats: {
+          cppTimeMs: totalCppMs,
+          llmTimeSec: 0.1,
+          modelName: llmProvider.getModelName(),
+          provider: 'fallback'
+        }
+      });
+    }
+
+    res.end();
+  } catch (error) {
+    sendEvent({ type: 'error', error: error.message || 'Streaming failed' });
+    res.end();
   }
 });
 

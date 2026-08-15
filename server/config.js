@@ -31,7 +31,7 @@ function resolveLlmProvider() {
   const explicit = process.env.LLM_PROVIDER?.toLowerCase();
   if (explicit === 'google') return 'gemini';
   if (explicit) return explicit;
-  return 'ollama';
+  return process.env.NODE_ENV === 'production' ? 'gemini' : 'ollama';
 }
 
 const ollamaUrl = env('OLLAMA_URL', 'http://localhost:11434').replace(/\/$/, '');
@@ -41,6 +41,7 @@ const config = {
   nodeEnv: env('NODE_ENV', 'development'),
   mongoUri: env('MONGO_URI', 'mongodb://localhost:27017/montecarlo'),
   mongoDbName: env('MONGO_DB_NAME', 'montecarlo'),
+  mongoTimeoutMs: envInt('MONGO_TIMEOUT_MS', 3000),
 
   corsOrigins: env(
     'CORS_ORIGINS',
@@ -80,7 +81,7 @@ const config = {
 
   gemini: {
     apiKey: env('GEMINI_API_KEY', ''),
-    model: env('GEMINI_MODEL', 'gemini-2.0-flash'),
+    model: env('GEMINI_MODEL', 'gemini-2.5-flash'),
     apiUrl: env(
       'GEMINI_API_URL',
       'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
@@ -107,6 +108,9 @@ const config = {
     greeksNumTrials: envInt('AGENT_GREEKS_NUM_TRIALS', 100000),
     newsDefaultCount: envInt('AGENT_NEWS_DEFAULT_COUNT', 5)
   },
+
+  // C++ thread count passed to monte_carlo binary (0 = hardware_concurrency / auto-detect all available cores).
+  cppThreads: envInt('CPP_THREADS', 0),
 
   validation: {
     strongDelta: envFloat('VALIDATION_STRONG_DELTA', 0.5),

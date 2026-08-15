@@ -3,12 +3,19 @@ const { body, param, validationResult } = require('express-validator');
 const router = express.Router();
 const historyController = require('../controllers/historyController');
 
+const ALLOWED_SIMULATION_TYPES = ['european', 'black-scholes', 'asian', 'greeks', 'delta-hedge'];
+
 // Input validation for history
 const validateSimulationInput = [
-  body('simulationType').isString().notEmpty().withMessage('Simulation type is required'),
+  body('simulationType')
+    .isString()
+    .notEmpty()
+    .isIn(ALLOWED_SIMULATION_TYPES)
+    .withMessage(`Simulation type must be one of: ${ALLOWED_SIMULATION_TYPES.join(', ')}`),
   body('parameters').isObject().notEmpty().withMessage('Parameters are required'),
   body('result').isObject().notEmpty().withMessage('Result is required'),
-  body('name').isString().notEmpty().trim().escape().withMessage('Name is required'),
+  body('name').optional().isString().trim().escape(),
+  body('symbol').optional().isString().trim().escape(),
   body('description').optional().isString().trim().escape(),
   body('tags').isArray().optional()
 ];
@@ -33,13 +40,16 @@ const handleValidationErrors = (req, res, next) => {
     return res.status(400).json({ 
       error: 'Validation error', 
       details: errors.array().map(err => ({
-        field: err.param,
+        field: err.path || err.param,
         message: err.msg
       }))
     });
   }
   next();
 };
+
+// Database connectivity status
+router.get('/status', historyController.getHistoryStatus);
 
 // Get all simulation history
 router.get('/', historyController.getHistory);
@@ -65,4 +75,11 @@ router.put('/:id',
   historyController.updateSimulation
 );
 
-module.exports = router; 
+// Delete a simulation
+router.delete('/:id',
+  validateId,
+  handleValidationErrors,
+  historyController.deleteSimulation
+);
+
+module.exports = router;

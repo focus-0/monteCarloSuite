@@ -37,6 +37,8 @@ app.use('/api/', apiLimiter);
 // Body parser
 app.use(express.json({ limit: config.bodyLimit }));
 
+// MongoDB sanitize middleware
+app.use(mongoSanitize());
 
 // CORS configuration
 app.use(cors({

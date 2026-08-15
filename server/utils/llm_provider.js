@@ -1,10 +1,12 @@
 /**
- * LLM provider abstraction — supports local Ollama (default), Groq, and Google Gemini.
- * All env-backed settings come from server/config.js.
+ * LLM Provider Abstraction — Supports Local Ollama (Gemma), Groq, and Google Gemini API.
+ * Includes auto-detection/startup for Ollama and Real-Time Streaming support.
  */
 
 const { Agent, fetch: undiciFetch } = require('undici');
 const config = require('../config');
+const { ensureOllamaRunning, getActiveOllamaModel } = require('./ollama_runner');
+
 const {
   ollama,
   groq,
@@ -75,7 +77,7 @@ function extractUsageFromOllama(raw, latencyMs) {
   return { evalCount: 0, tokensPerSec: null };
 }
 
-function extractUsageFromGroq(raw, latencyMs) {
+function extractUsageFromOpenAICompat(raw, latencyMs) {
   const evalCount = raw?.usage?.completion_tokens || 0;
   const tokensPerSec =
     evalCount && latencyMs > 0
@@ -84,9 +86,7 @@ function extractUsageFromGroq(raw, latencyMs) {
   return { evalCount, tokensPerSec };
 }
 
-const extractUsageFromOpenAICompat = extractUsageFromGroq;
-
-function convertMessagesForGroq(messages) {
+function convertMessagesForOpenAI(messages) {
   const out = [];
   let pendingToolCalls = [];
 
@@ -98,6 +98,7 @@ function convertMessagesForGroq(messages) {
       out.push({
         role: 'tool',
         tool_call_id: msg.tool_call_id || matched?.id || `call_${out.length}`,
+        name: msg.name || matched?.function?.name || 'tool',
         content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
       });
       continue;
@@ -134,7 +135,7 @@ function convertMessagesForGroq(messages) {
   return out;
 }
 
-async function openAICompatChat(messages, { tools } = {}, providerConfig, providerLabel) {
+async function openAICompatChat(messages, { tools, jsonMode } = {}, providerConfig, providerLabel) {
   const apiKey = providerConfig.apiKey;
   if (!apiKey) {
     throw new Error(
@@ -145,12 +146,15 @@ async function openAICompatChat(messages, { tools } = {}, providerConfig, provid
   const startT = Date.now();
   const body = {
     model: providerConfig.model,
-    messages: convertMessagesForGroq(messages),
+    messages: convertMessagesForOpenAI(messages),
     stream: false
   };
   if (tools?.length) {
     body.tools = tools;
     body.tool_choice = 'auto';
+  }
+  if (jsonMode) {
+    body.response_format = { type: 'json_object' };
   }
 
   const res = await fetchWithTimeout(
@@ -189,15 +193,22 @@ async function openAICompatChat(messages, { tools } = {}, providerConfig, provid
   };
 }
 
-async function ollamaChat(messages, { tools } = {}) {
+async function ollamaChat(messages, { tools, jsonMode } = {}) {
+  // Ensure Ollama daemon is active & discover model tag
+  const ollamaStatus = await ensureOllamaRunning();
+  const activeModel = ollamaStatus.model || getActiveOllamaModel();
+
   const startT = Date.now();
   const body = {
-    model: ollama.model,
+    model: activeModel,
     messages,
     stream: false
   };
   if (tools?.length) {
     body.tools = tools;
+  }
+  if (jsonMode) {
+    body.format = 'json';
   }
 
   const res = await fetchWithTimeout(
@@ -230,32 +241,154 @@ async function ollamaChat(messages, { tools } = {}) {
   };
 }
 
-async function groqChat(messages, options = {}) {
-  return openAICompatChat(messages, options, groq, 'groq');
-}
-
-async function geminiChat(messages, options = {}) {
-  return openAICompatChat(messages, options, gemini, 'gemini');
-}
-
 /**
  * Send a chat completion request to the configured LLM provider.
- * @returns {{ message: { role, content, tool_calls? }, usage: { evalCount, tokensPerSec }, latencyMs, raw }}
  */
 async function chat(messages, options = {}) {
   validateLlmConfig();
   const provider = getLlmProviderName();
   if (provider === 'groq') {
-    return groqChat(messages, options);
+    return openAICompatChat(messages, options, groq, 'groq');
   }
   if (provider === 'gemini') {
-    return geminiChat(messages, options);
+    return openAICompatChat(messages, options, gemini, 'gemini');
   }
   return ollamaChat(messages, options);
 }
 
+/**
+ * Stream chat tokens in real-time from the active LLM provider (Ollama / Gemini).
+ * @param {Array} messages - Chat messages
+ * @param {Function} onToken - Callback for each streamed token string
+ * @param {Object} options - Options (jsonMode, etc.)
+ */
+async function chatStream(messages, onToken, options = {}) {
+  validateLlmConfig();
+  const provider = getLlmProviderName();
+
+  if (provider === 'gemini' || provider === 'groq') {
+    const providerConfig = provider === 'gemini' ? gemini : groq;
+    const apiKey = providerConfig.apiKey;
+    if (!apiKey) {
+      throw new Error(`API key for ${provider} is not set.`);
+    }
+
+    const body = {
+      model: providerConfig.model,
+      messages: convertMessagesForOpenAI(messages),
+      stream: true
+    };
+    if (options.jsonMode) {
+      body.response_format = { type: 'json_object' };
+    }
+
+    const res = await fetch(providerConfig.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`${provider} streaming error (${res.status}): ${errText.slice(0, 200)}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let fullText = '';
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(':')) continue;
+        if (trimmed === 'data: [DONE]') continue;
+        if (trimmed.startsWith('data: ')) {
+          try {
+            const parsed = JSON.parse(trimmed.slice(6));
+            const delta = parsed.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              fullText += delta;
+              if (onToken) onToken(delta, fullText);
+            }
+          } catch {
+            // Ignore partial SSE chunk parse error
+          }
+        }
+      }
+    }
+
+    return { content: fullText, provider };
+  }
+
+  // Local Ollama streaming
+  await ensureOllamaRunning();
+  const activeModel = getActiveOllamaModel();
+
+  const body = {
+    model: activeModel,
+    messages,
+    stream: true
+  };
+  if (options.jsonMode) {
+    body.format = 'json';
+  }
+
+  const res = await fetch(ollama.chatUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    throw new Error(`Ollama streaming error (${res.status}): ${res.statusText}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let fullText = '';
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        const delta = parsed.message?.content || '';
+        if (delta) {
+          fullText += delta;
+          if (onToken) onToken(delta, fullText);
+        }
+      } catch {
+        // Ignore partial chunk parse error
+      }
+    }
+  }
+
+  return { content: fullText, provider: 'ollama', model: activeModel };
+}
+
 module.exports = {
   chat,
+  chatStream,
   getProviderName: getLlmProviderName,
   getModelName: getLlmModelName,
   validateProviderConfig: validateLlmConfig,

@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const config = require('../config');
 
 const primaryPath = path.join(__dirname, '..', 'cpp', 'monte_carlo');
 const buildPath = path.join(__dirname, '..', 'cpp', 'build', 'monte_carlo');
@@ -25,6 +26,13 @@ function parseBool(val) {
   if (typeof val === 'string') return val.toLowerCase() === 'true' || val === '1';
   if (typeof val === 'number') return val !== 0;
   return true;
+}
+
+function resolveThreads(explicit) {
+  if (explicit !== undefined && explicit !== null && explicit !== '') {
+    return Math.floor(Number(explicit));
+  }
+  return config.cppThreads;
 }
 
 function runCppProcess(args) {
@@ -76,7 +84,7 @@ function runCppProcess(args) {
 }
 
 function monteCarloBlackScholes(params) {
-  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, threads = 0 } = params;
+  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, threads } = params;
   const args = [
     Number(S0).toString(),
     Number(K).toString(),
@@ -86,13 +94,13 @@ function monteCarloBlackScholes(params) {
     parseBool(isCall) ? '1' : '0',
     Math.floor(Number(numTrials)).toString(),
     '0', // Mode 0 = European
-    Number(threads).toString()
+    resolveThreads(threads).toString()
   ];
   return runCppProcess(args);
 }
 
 function monteCarloAsianOption(params) {
-  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, numSteps = 252, threads = 0 } = params;
+  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, numSteps = 252, threads } = params;
   const args = [
     Number(S0).toString(),
     Number(K).toString(),
@@ -102,14 +110,14 @@ function monteCarloAsianOption(params) {
     parseBool(isCall) ? '1' : '0',
     Math.floor(Number(numTrials)).toString(),
     '2', // Mode 2 = Asian
-    Number(threads).toString(),
+    resolveThreads(threads).toString(),
     Math.floor(Number(numSteps)).toString()
   ];
   return runCppProcess(args);
 }
 
 function calculateGreeks(params) {
-  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, threads = 0 } = params;
+  const { S0 = 100, K = 100, r = 0.05, sigma = 0.2, T = 1, isCall = true, numTrials = 100000, threads } = params;
   const args = [
     Number(S0).toString(),
     Number(K).toString(),
@@ -119,7 +127,7 @@ function calculateGreeks(params) {
     parseBool(isCall) ? '1' : '0',
     Math.floor(Number(numTrials)).toString(),
     '3', // Mode 3 = Greeks
-    Number(threads).toString()
+    resolveThreads(threads).toString()
   ];
   return runCppProcess(args);
 }
@@ -153,7 +161,7 @@ function simulateDeltaHedging(params) {
     numSteps = 252,
     rebalanceFreq = 1,
     txCostPct = 0.001,
-    threads = 0
+    threads
   } = params;
 
   const args = [
@@ -165,7 +173,7 @@ function simulateDeltaHedging(params) {
     parseBool(isCall) ? '1' : '0',
     Math.floor(Number(numTrials)).toString(),
     '5', // Mode 5 = Delta-Hedging Simulator
-    Number(threads).toString(),
+    resolveThreads(threads).toString(),
     Math.floor(Number(numSteps)).toString(),
     Math.floor(Number(rebalanceFreq)).toString(),
     Number(txCostPct).toString()

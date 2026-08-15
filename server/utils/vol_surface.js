@@ -58,6 +58,7 @@ function interpolateVol(surface, K, T) {
   if (!surface?.points?.length) return null;
 
   const targetT = T ?? surface.T_years ?? 0.25;
+  const S = surface.spot ?? 100.0;
   let best = null;
   let minDist = Infinity;
 

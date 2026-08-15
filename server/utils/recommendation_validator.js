@@ -2,16 +2,64 @@ const config = require('../config');
 
 const { strongDelta, strongVega } = config.validation;
 
+const VALID_RECOMMENDATIONS = ['BUY', 'SELL', 'HOLD'];
+
 /**
- * Parse BUY | SELL | HOLD from LLM free-text (same precedence as routes.js).
- * @param {string} gemmaText
+ * Parse BUY | SELL | HOLD from LLM free-text (regex fallback).
+ * @param {string} text
  * @returns {'BUY' | 'SELL' | 'HOLD'}
  */
-function parseRecommendation(gemmaText) {
-  if (!gemmaText || typeof gemmaText !== 'string') return 'HOLD';
-  if (gemmaText.includes('BUY')) return 'BUY';
-  if (gemmaText.includes('SELL')) return 'SELL';
+function parseRecommendation(text) {
+  if (!text || typeof text !== 'string') return 'HOLD';
+  const upper = text.toUpperCase();
+  if (/\bBUY\b/.test(upper)) return 'BUY';
+  if (/\bSELL\b/.test(upper)) return 'SELL';
   return 'HOLD';
+}
+
+/**
+ * Parse structured JSON response from LLM; falls back to regex on free-text.
+ * @param {string} llmText
+ * @returns {{ recommendation: 'BUY'|'SELL'|'HOLD', reasoning: string }}
+ */
+function parseStructuredResponse(llmText) {
+  if (!llmText || typeof llmText !== 'string') {
+    return { recommendation: 'HOLD', reasoning: '' };
+  }
+
+  let jsonStr = llmText.trim();
+  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    jsonStr = fenceMatch[1].trim();
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const rawRec = String(parsed.recommendation || '').toUpperCase();
+    const recommendation = VALID_RECOMMENDATIONS.includes(rawRec)
+      ? rawRec
+      : parseRecommendation(parsed.reasoning || llmText);
+    return {
+      recommendation,
+      reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : llmText
+    };
+  } catch {
+    return {
+      recommendation: parseRecommendation(llmText),
+      reasoning: llmText
+    };
+  }
+}
+
+/**
+ * Scale vega threshold by option price (reference $100 ATM baseline).
+ * @param {number} optionPrice
+ * @returns {number}
+ */
+function scaledVegaThreshold(optionPrice) {
+  const refPrice = 100;
+  const price = Math.max(optionPrice || refPrice, 0.01);
+  return strongVega * (price / refPrice);
 }
 
 /**
@@ -20,18 +68,23 @@ function parseRecommendation(gemmaText) {
  * @param {number} params.delta
  * @param {number} params.vega
  * @param {boolean} params.isCall
+ * @param {number} [params.optionPrice] - scales vega threshold
  * @param {string} [params.gemmaText] - parsed when recommendation omitted
  * @param {'BUY'|'SELL'|'HOLD'} [params.recommendation]
- * @returns {{ recommendation: string, consistencyCheck: { passed: boolean, flags: Array } }}
+ * @returns {{ recommendation: string, reasoning: string, consistencyCheck: { passed: boolean, flags: Array } }}
  */
 function validateRecommendationConsistency({
   delta,
   vega,
   isCall,
+  optionPrice,
   gemmaText,
   recommendation: explicitRec
 }) {
-  const recommendation = explicitRec || parseRecommendation(gemmaText);
+  const parsed = explicitRec
+    ? { recommendation: explicitRec, reasoning: gemmaText || '' }
+    : parseStructuredResponse(gemmaText);
+  const recommendation = parsed.recommendation;
   const flags = [];
 
   if (isCall) {
@@ -77,11 +130,12 @@ function validateRecommendationConsistency({
   }
 
   const absVega = Math.abs(vega);
-  if (absVega > strongVega && recommendation === 'SELL') {
+  const vegaThreshold = scaledVegaThreshold(optionPrice);
+  if (absVega > vegaThreshold && recommendation === 'SELL') {
     flags.push({
       type: 'vega_mismatch',
       severity: 'warning',
-      message: `Inconsistent: high vega (${vega}) indicates significant vol sensitivity; SELL reduces long-vol exposure — verify intent`,
+      message: `Inconsistent: high vega (${vega}, threshold ${vegaThreshold.toFixed(2)} for $${(optionPrice || 100).toFixed(2)} option) indicates significant vol sensitivity; SELL reduces long-vol exposure — verify intent`,
       greek: 'vega',
       greekValue: vega,
       recommendation
@@ -90,6 +144,7 @@ function validateRecommendationConsistency({
 
   return {
     recommendation,
+    reasoning: parsed.reasoning,
     consistencyCheck: {
       passed: flags.length === 0,
       flags
@@ -99,5 +154,7 @@ function validateRecommendationConsistency({
 
 module.exports = {
   parseRecommendation,
+  parseStructuredResponse,
+  scaledVegaThreshold,
   validateRecommendationConsistency
 };

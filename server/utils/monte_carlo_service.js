@@ -2,6 +2,7 @@ const cppMonteCarlo = require('./monte_carlo_cpp');
 const jsMonteCarlo = require('./monte_carlo_js');
 const analyticalBS = require('./black_scholes_analytical');
 const marketData = require('./market_data');
+const config = require('../config');
 
 class MonteCarloService {
   async calculateOptionPrice(params) {
@@ -137,6 +138,7 @@ class MonteCarloService {
       cpp_available: isCppAvailable,
       js_available: true,
       default_implementation: isCppAvailable ? 'cpp' : 'js',
+      cpp_threads: config.cppThreads,
       analytical_available: true
     };
   }
