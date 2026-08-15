@@ -4,9 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
-const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
-const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
 const config = require('./config');
 const routes = require('./src/routes');
@@ -19,10 +17,9 @@ connectDB();
 const app = express();
 
 // Trust reverse proxy headers (Render, Heroku, Cloudflare, AWS ELB)
-app.set('trust proxy', 1);
+app.set('trust proxy', true);
 
-// Security middleware
-// Allow React SPA inline scripts, fonts, and assets
+// Security middleware (relaxed CSP for React SPA inline scripts and fonts)
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -30,47 +27,28 @@ app.use(
   })
 );
 
-// Rate limiting - relaxed for high-frequency simulation runs and benchmarks
-const apiLimiter = rateLimit({
-  windowMs: config.rateLimit.windowMs,
-  max: config.nodeEnv === 'production' ? config.rateLimit.maxProduction : config.rateLimit.maxDevelopment,
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
-  message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
-});
-
-// Apply rate limiting to all routes
-app.use('/api/', apiLimiter);
-
 // Body parser
 app.use(express.json({ limit: config.bodyLimit }));
 
 // MongoDB sanitize middleware
 app.use(mongoSanitize());
 
-// CORS configuration
+// CORS configuration (allow all origins for seamless client + API access)
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow same-origin, curl/server requests, Render subdomains, and configured origins
-    if (!origin || origin.includes('.onrender.com') || origin.includes('localhost') || config.corsOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    return callback(null, true);
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Routes
+// API Routes
 app.use(routes);
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Server error:', err.stack || err.message);
   res.status(500).json({
     status: 'error',
-    message: config.nodeEnv === 'development' ? err.message : 'Something went wrong'
+    message: config.nodeEnv === 'development' ? err.message : 'Internal Server Error'
   });
 });
 
@@ -108,9 +86,8 @@ app.listen(config.port, () => {
   // Log which implementation is available
   const status = monteCarloService.getImplementationStatus();
   if (status.cpp_available) {
-    console.log('C++ implementation for Monte Carlo simulation is available');
+    console.log('C++ implementation for Monte Carlo simulation is available (Node-API In-Process)');
   } else {
     console.log('C++ implementation not found, will use JavaScript implementation');
-    console.log('To enable C++ implementation, run: cd server/cpp && ./build.sh');
   }
-}); 
+});
