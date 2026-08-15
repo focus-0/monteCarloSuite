@@ -18,6 +18,9 @@ connectDB();
 
 const app = express();
 
+// Trust reverse proxy headers (Render, Heroku, Cloudflare, AWS ELB)
+app.set('trust proxy', 1);
+
 // Security middleware
 // Set security headers
 app.use(helmet());
@@ -28,6 +31,7 @@ const apiLimiter = rateLimit({
   max: config.nodeEnv === 'production' ? config.rateLimit.maxProduction : config.rateLimit.maxDevelopment,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
 });
 
