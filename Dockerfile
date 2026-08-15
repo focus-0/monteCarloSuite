@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app/server
 COPY server/package.json server/package-lock.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 COPY server/cpp/ ./cpp/
 COPY server/build_addon.sh ./
