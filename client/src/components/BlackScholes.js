@@ -8,6 +8,8 @@ import PricePathsChart from './charts/PricePathsChart';
 import QuantAgentPanel from './QuantAgentPanel';
 import DeltaHedgeSimulator from './DeltaHedgeSimulator';
 
+import Logo from './Logo';
+
 import { API_BASE_URL } from '../apiConfig';
 
 const BlackScholes = () => {
@@ -291,8 +293,9 @@ const BlackScholes = () => {
   return (
     <div className="monte-carlo-dashboard">
       <nav className="dashboard-nav">
-        <div className="nav-brand">
-          <h2>MonteCarloSuite</h2>
+        <div className="nav-brand" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Logo size={32} />
+          <h2 style={{ margin: 0 }}>MonteCarloSuite</h2>
         </div>
         <div className="nav-right">
           {/* Live MongoDB Status Indicator */}
